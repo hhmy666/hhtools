@@ -1,0 +1,4 @@
+# Generated templates, manifests and verification reports are local runtime data.
+*
+!.gitignore
+!.gitkeep

@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>塔占比修改及增加Btile工具</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/view-model.js" defer></script>
+  <script src="/assets/batch-import.js" defer></script>
+  <script src="/assets/help-content.js" defer></script>
+  <script src="/assets/template-preview.js" defer></script>
+  <script src="/assets/manual-edit.js" defer></script>
+  <script src="/assets/parameter-config.js" defer></script>
+  <script src="/assets/increase-ui.js" defer></script>
+  <script src="/assets/ordinary-add-ui.js" defer></script>
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell" id="app-shell">
+    <header class="topbar">
+      <button class="brand-button" id="brand-home" type="button" aria-label="返回优化工作台">
+        <svg aria-hidden="true"><use href="/assets/icons.svg#layers"></use></svg>
+        <span>塔占比修改及增加Btile工具</span>
+      </button>
+      <div class="topbar-actions">
+        <span class="service-status is-connecting" id="service-status" role="status" aria-live="polite">
+          <svg aria-hidden="true"><use href="/assets/icons.svg#status"></use></svg>
+          <span id="service-status-text">正在连接本地服务</span>
+        </span>
+        <button class="text-button" id="restart-button" type="button" aria-label="重新开始"><svg aria-hidden="true"><use href="/assets/icons.svg#restart"></use></svg><span>重新开始</span></button>
+        <button class="text-button" id="help-button" type="button" aria-label="使用说明"><svg aria-hidden="true"><use href="/assets/icons.svg#book"></use></svg><span>使用说明</span></button>
+      </div>
+    </header>
+
+    <aside class="sidebar" aria-label="主导航">
+      <nav class="primary-nav">
+        <button class="nav-item is-active" type="button" data-route="workspace" aria-current="page"><svg aria-hidden="true"><use href="/assets/icons.svg#workbench"></use></svg><span>优化工作台</span></button>
+        <button class="nav-item" type="button" data-route="history"><svg aria-hidden="true"><use href="/assets/icons.svg#history"></use></svg><span>运行记录</span></button>
+        <button class="nav-item" type="button" data-route="ordinary_add"><svg aria-hidden="true"><use href="/assets/icons.svg#layers"></use></svg><span>增加<wbr>Btile工具</span></button>
+        <button class="nav-item" type="button" data-route="parameters"><svg aria-hidden="true"><use href="/assets/icons.svg#layers"></use></svg><span>一键配置<wbr>新参数</span></button>
+        <button class="nav-item nav-settings" type="button" data-route="settings"><svg aria-hidden="true"><use href="/assets/icons.svg#settings"></use></svg><span>设置</span></button>
+      </nav>
+    </aside>
+
+    <main class="main-content" id="main-content">
+      <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+      <div data-view="workspace" id="workspace-view">
+        <ol class="flow-rail" aria-label="模板优化流程">
+          <li class="is-current" data-step-indicator="1" aria-current="step"><span>1</span>导入模板</li>
+          <li data-step-indicator="2"><span>2</span>配置参数</li>
+          <li data-step-indicator="3"><span>3</span>导出模板</li>
+        </ol>
+
+        <section class="flow-page is-active" data-flow="1" aria-labelledby="flow-one-title">
+          <div class="flow-heading import-heading">
+            <div>
+              <h1 id="flow-one-title" tabindex="-1">导入关卡模板</h1>
+              <p>输入模板 ID，从本地仓库读取；或上传模板文件。</p>
+            </div>
+          </div>
+          <form class="card import-card" id="import-form" novalidate>
+            <div class="segmented-control import-tabs" role="tablist" aria-label="模板导入方式">
+              <button type="button" role="tab" class="is-selected" id="import-ids-tab" data-import-mode="ids" aria-selected="true" aria-controls="import-ids-panel">输入模板 ID</button>
+              <button type="button" role="tab" id="import-files-tab" data-import-mode="files" aria-selected="false" aria-controls="import-files-panel" tabindex="-1">上传模板文件</button>
+            </div>
+            <div class="import-panel" id="import-ids-panel" role="tabpanel" aria-labelledby="import-ids-tab">
+              <div class="field">
+                <label for="template-ids">模板 ID</label>
+                <textarea id="template-ids" class="resize-none" rows="6" spellcheck="false" placeholder="每行一个模板 ID，例如：&#10;mxd0057v1&#10;hr0029&#10;hr0044" aria-describedby="template-ids-help"></textarea>
+                <div class="field-hint" id="template-ids-help"><span id="template-id-count">已输入 0 项</span><span>不需要 _m.bytes 后缀</span></div>
+              </div>
+              <div class="source-choice field"><label for="source-repository">读取来源</label><select id="source-repository"><option value="tile">Tile 仓</option><option value="template">模板仓</option></select></div>
+            </div>
+            <div class="import-panel" id="import-files-panel" role="tabpanel" aria-labelledby="import-files-tab" hidden>
+              <input class="visually-hidden-file" id="template-files" name="files" type="file" accept=".bytes" multiple aria-describedby="template-files-help">
+              <label class="drop-zone" id="drop-zone" for="template-files">
+                <svg aria-hidden="true"><use href="/assets/icons.svg#upload"></use></svg>
+                <strong>拖入一个或多个 _m.bytes</strong>
+                <span>或点击选择文件</span>
+              </label>
+              <p class="field-help" id="template-files-help">可一次选择全部模板，也可追加。单文件最多 32 MB。</p>
+              <ul class="file-list" id="file-list" aria-label="待导入模板列表"><li class="empty-row">尚未选择模板。</li></ul>
+            </div>
+            <div class="inline-feedback" id="import-feedback" role="status" aria-live="polite" hidden><svg aria-hidden="true"><use href="/assets/icons.svg#status"></use></svg><span></span></div>
+            <div id="import-results" hidden></div>
+            <div class="import-progress" id="import-progress" hidden>
+              <div class="import-progress-labels"><span id="import-progress-label" role="status" aria-live="polite"></span><span class="field-help" id="import-progress-detail"></span></div>
+              <progress id="import-progress-bar" value="0" max="1" aria-labelledby="import-progress-label"></progress>
+            </div>
+            <div class="import-entry-actions" id="import-entry-actions" role="group" aria-label="选择模板修改方式">
+              <button class="primary-button" id="inspect-ordinary-button" type="submit" data-import-workspace-mode="ordinary_add" hidden disabled>解析模板<svg aria-hidden="true"><use href="/assets/icons.svg#arrow"></use></svg></button>
+              <button class="primary-button" id="inspect-increase-button" type="submit" data-import-workspace-mode="increase" disabled>去增加塔<svg aria-hidden="true"><use href="/assets/icons.svg#arrow"></use></svg></button>
+              <button class="primary-button" id="inspect-button" type="submit" data-import-workspace-mode="reduce" disabled>去减少塔<svg aria-hidden="true"><use href="/assets/icons.svg#arrow"></use></svg></button>
+            </div>
+            <div class="source-status">
+              <svg aria-hidden="true"><use href="/assets/icons.svg#folder"></use></svg>
+              <span><strong id="source-status-label">源模板只读</strong><small id="source-path-label">等待读取路径</small></span>
+              <button class="link-button" type="button" data-route="settings">修改路径</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="flow-page" data-flow="2" aria-labelledby="flow-two-title" hidden>
+          <div class="flow-heading with-action">
+            <div>
+              <h1 id="flow-two-title" tabindex="-1">配置塔保留与补牌规则</h1>
+              <p>统一设置本批次参数，也可单独调整某个模板。</p>
+            </div>
+            <button class="secondary-button" type="button" data-go-step="1">返回导入</button>
+          </div>
+
+          <form id="configuration-form" novalidate>
+            <div class="batch-summary card"><div><span class="soft-label">统一方案</span><strong id="batch-summary-text">0% ≤ 塔占比 &lt;25% · 顶层优先 · 单层20张 · 新增最多2层</strong></div><button class="text-button" type="button" id="edit-batch-parameters">编辑统一方案</button></div>
+            <details class="import-issues" id="import-issues-summary" hidden><summary id="import-issues-title">部分模板未导入</summary><ul id="import-issues-list"></ul></details>
+            <div class="configuration-layout">
+              <section class="card template-config-card">
+                <div class="card-heading"><h2 class="card-title">模板清单</h2><span class="status-pill neutral" id="template-count-pill">0 个模板</span></div>
+                <div class="table-scroll" role="region" aria-label="模板参数清单，可横向滚动" tabindex="0"><table class="configuration-table"><thead><tr><th>模板</th><th>原塔占比</th><th>当前方案</th><th>操作</th></tr></thead><tbody id="template-config-list"><tr><td colspan="4" class="table-empty">解析模板后显示清单。</td></tr></tbody></table></div>
+              </section>
+              <div class="stack parameter-drawer">
+                <div class="card parameter-editor">
+                  <div class="card-heading">
+                    <h2 class="card-title" id="parameter-editor-title">批次默认参数</h2>
+                    <button class="text-button" id="restore-batch-parameters" type="button" hidden>恢复批次默认</button>
+                  </div>
+                  <div id="increase-parameter-fields" hidden></div>
+                  <div class="form-grid" id="batch-parameter-fields">
+                    <div class="field span-two"><label for="batch-replenish-type">非塔补牌类型</label><select id="batch-replenish-type"><option value="auto">自动（原规则）</option><option value="majority_A">以 A Tile 为主</option><option value="majority_B">以 B Tile 为主</option><option value="preserve">与原搬出牌类型一致</option><option value="A">全部补 A</option><option value="B">全部补 B</option></select><p>以A/B为主时，少量另一类用于补齐最终三张成组，并邻近原非塔同类。</p></div>
+                    <div class="field">
+                      <label for="min-target-ratio">塔占比下限</label>
+                      <div class="input-suffix"><input id="min-target-ratio" name="min_target_ratio" type="number" value="0" min="0" max="100" step="0.1" aria-describedby="min-target-ratio-help"><span>%</span></div>
+                      <p id="min-target-ratio-help">结果可等于下限；下限需小于上限。</p>
+                    </div>
+                    <div class="field">
+                      <label for="target-ratio">塔占比上限</label>
+                      <div class="input-suffix"><input id="target-ratio" name="target_ratio" type="number" value="25" min="0" max="100" step="0.1" aria-describedby="target-ratio-help"><span>%</span></div>
+                      <p id="target-ratio-help">可填0–100%，且不能高于各原模板塔占比；0为去塔，其余结果严格小于此值。</p>
+                    </div>
+                    <div class="field">
+                      <label for="layer-limit">单层非塔 Tile 上限</label>
+                      <input id="layer-limit" name="layer_tile_limit" type="number" value="20" min="1" step="1">
+                    </div>
+                    <div class="field">
+                      <label for="max-new-layers">最多新增层数</label>
+                      <input id="max-new-layers" name="max_new_layers" type="number" value="2" min="0" step="1">
+                    </div>
+                    <div class="field">
+                      <label for="placement-strategy">补牌位置</label>
+                      <select id="placement-strategy" name="placement_strategy">
+                        <option value="top_first">顶层优先</option>
+                        <option value="bottom_first">底层优先</option>
+                        <option value="balanced">五五开</option>
+                        <option value="seeded_random">随机</option>
+                      </select>
+                    </div>
+                    <div class="field" id="seed-field" hidden>
+                      <label for="random-seed">随机种子</label>
+                      <input id="random-seed" name="random_seed" type="number" value="1" step="1">
+                    </div>
+                    <div class="field">
+                      <label for="tower-mode">塔保留方式</label>
+                      <select id="tower-mode" name="tower_mode">
+                        <option value="automatic">按占比自动分配</option>
+                        <option value="advanced">高级逐塔</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div id="parameter-override-editor" class="override-fields" hidden></div>
+                </div>
+
+                <div class="card" id="advanced-tower-card" hidden>
+                  <h2 class="card-title">逐塔保留数量</h2>
+                  <div id="tower-fields" class="tower-fields"><p class="empty-copy">暂无可配置的塔堆。</p></div>
+                </div>
+                <div class="generation-actions">
+                  <button class="primary-button" id="generate-button" type="submit">开始生成<svg aria-hidden="true"><use href="/assets/icons.svg#arrow"></use></svg></button>
+                </div>
+              </div>
+            </div>
+          </form>
+        </section>
+
+        <section class="flow-page" data-flow="3" aria-labelledby="flow-three-title" hidden>
+          <div class="flow-heading with-action">
+            <div>
+              <h1 id="flow-three-title" tabindex="-1">验收并导出新模板</h1>
+              <p>可单独调整，或勾选多个模板统一改参重跑；已通过项可下载或导出。</p>
+              <p id="export-availability-hint" role="status" aria-live="polite"></p>
+            </div>
+            <div class="heading-actions">
+              <button class="secondary-button" type="button" data-go-step="2">返回配置</button>
+              <button class="primary-button" id="preview-export-button" type="submit" form="export-form" disabled>预览导出</button>
+            </div>
+          </div>
+
+          <div class="task-stack" id="task-panel">
+            <div class="card task-card">
+              <div class="task-heading">
+                <div class="task-spinner" aria-hidden="true"><svg><use href="/assets/icons.svg#process"></use></svg></div>
+                <div><h2 class="card-title" id="task-title">等待生成并独立验收</h2><p id="task-description">尚未开始。</p></div>
+              </div>
+              <div class="progress-row"><progress id="task-progress" max="100" value="0" aria-label="模板优化任务进度"></progress><strong id="task-progress-value">0%</strong></div>
+            </div>
+          </div>
+          <div class="card result-card">
+            <div class="card-heading"><h2 class="card-title">生成与验收明细</h2><span class="status-pill neutral" id="batch-status">等待结果</span></div>
+            <div class="result-summary" aria-label="生成结果汇总"><span>共 <strong id="metric-input">0</strong> 个模板</span><span id="metric-pass">0 个通过</span><span id="metric-fail">0 个失败</span><span id="metric-noop">0 个无需优化</span></div>
+            <div class="result-selection-toolbar" aria-label="批量调整模板">
+              <span id="result-selection-count" aria-live="polite">已选 0 个模板</span>
+              <div class="result-selection-actions"><button class="row-action" id="select-failed-templates" type="button">选择失败项</button><button class="row-action" id="clear-result-selection" type="button" disabled>清空选择</button><button class="secondary-button" id="batch-center-button" type="button" disabled>批量居中新模板</button><button class="secondary-button" id="batch-rerun-button" type="button" disabled>批量修改参数并重跑</button></div>
+            </div>
+            <div id="batch-center-progress-panel" class="batch-center-progress" hidden>
+              <div class="import-progress-labels"><strong id="batch-center-progress-title">正在居中新模板</strong><strong id="batch-center-progress-value">0%</strong></div>
+              <progress id="batch-center-progress" max="100" value="0" aria-label="批量居中新模板进度"></progress>
+              <p class="file-meta" id="batch-center-status" role="status" aria-live="polite"></p>
+            </div>
+            <div class="table-scroll" role="region" aria-label="生成与验收明细表，可横向滚动" tabindex="0">
+              <table class="result-table">
+                <thead><tr><th class="result-select-cell"><label class="visually-hidden" for="select-all-result-templates">选择全部可重跑模板</label><input id="select-all-result-templates" type="checkbox"></th><th>原模板 ID</th><th>新模板 ID</th><th>塔占比变化</th><th id="result-quantity-heading">挪动 Tile</th><th>验收状态</th><th>预览图</th><th>操作</th></tr></thead>
+                <tbody id="result-table-body"><tr><td colspan="8" class="table-empty">尚无生成结果。</td></tr></tbody>
+              </table>
+            </div>
+            <details class="task-details" id="task-details">
+              <summary>运行日志与过程</summary>
+              <div class="task-detail-body"><span class="file-meta" id="job-id-label">暂无任务编号</span>
+                <ol class="phase-list" aria-label="任务阶段，可横向滚动" tabindex="0"><li data-phase="decode">读取源文件</li><li data-phase="inspect">检查模板</li><li data-phase="distribution">计算塔分布</li><li data-phase="placement">搜索补牌位置</li><li data-phase="register_output">重写并独立验收</li></ol>
+                <ol class="log-list" id="log-list" aria-label="最近任务日志，可滚动" tabindex="0" aria-live="polite"><li>生成任务尚未开始。</li></ol>
+              </div>
+            </details>
+          </div>
+
+          <form class="card export-card" id="export-form" novalidate>
+            <div class="card-heading"><h2 class="card-title">导出模板</h2><span class="status-pill neutral" id="export-status">尚未预览</span></div>
+            <div class="form-grid">
+              <div class="field">
+                <label for="export-naming-rule">命名规则</label>
+                <input id="export-naming-rule" name="naming_rule" type="text" value="lessT{原模板ID}" aria-describedby="export-naming-help">
+                <p id="export-naming-help">未修改时保留当前产物名称。修改后只改变导出与 ZIP 的文件名及内部 ID；同批重名或目录已有同名文件会自动加 v2、v3，不覆盖文件。同步使用当前验收产物名称。</p>
+              </div>
+              <div class="field">
+                <label for="export-directory">导出目录</label>
+                <input id="export-directory" name="export_directory" type="text" aria-describedby="export-directory-help" placeholder="等待读取默认导出目录">
+                <p id="export-directory-help">仅修改本批次导出位置。</p>
+              </div>
+            </div>
+            <details class="optional-section"><summary>同步到模板库</summary><fieldset class="sync-targets">
+              <legend>同步目标</legend>
+              <label for="sync-template"><input id="sync-template" name="sync_targets" type="checkbox" value="template"><span><strong>同步至模板仓</strong><small id="sync-template-path">尚未绑定</small></span></label>
+              <label for="sync-tile"><input id="sync-tile" name="sync_targets" type="checkbox" value="tile"><span><strong>同步至 Tile 仓（编辑器内可直接验证）</strong><small id="sync-tile-path">尚未绑定</small></span></label>
+            </fieldset><button class="secondary-button" id="preview-sync-button" type="button">预览同步</button></details>
+            <div class="export-actions">
+              <button class="secondary-button" id="download-zip-button" type="button" disabled>下载全部已验收模板 ZIP</button>
+              <button class="primary-button" id="preview-export-bottom-button" type="submit" disabled>预览导出</button>
+            </div>
+            <div class="inline-feedback" id="export-feedback" role="status" aria-live="polite" hidden><svg aria-hidden="true"><use href="/assets/icons.svg#status"></use></svg><span></span></div>
+          </form>
+        </section>
+      </div>
+
+      <section class="secondary-view parameter-page" data-view="parameters" id="parameters-view" hidden aria-labelledby="parameters-title">
+        <div class="page-heading"><div><h1 id="parameters-title" tabindex="-1">一键配置新参数</h1><p>同型挪动保留原参数；A/B 转换或新增 Tile 按牌量比例调整，保留种子、塔幸运值与副本梯度。</p></div></div>
+        <form class="card parameter-source-card" id="parameter-source-form" novalidate>
+          <div class="segmented-control parameter-source-tabs" role="tablist" aria-label="新模板来源">
+            <button type="button" role="tab" class="is-selected" id="parameter-ids-tab" data-parameter-mode="ids" aria-selected="true" aria-controls="parameter-ids-panel">输入模板 ID</button>
+            <button type="button" role="tab" id="parameter-files-tab" data-parameter-mode="files" aria-selected="false" aria-controls="parameter-files-panel" tabindex="-1">上传文件</button>
+            <button type="button" role="tab" id="parameter-job-tab" data-parameter-mode="job" aria-selected="false" aria-controls="parameter-job-panel" tabindex="-1">沿用已生成模板</button>
+          </div>
+          <div class="parameter-input-layout">
+            <div class="parameter-source-main">
+              <div class="import-panel" id="parameter-ids-panel" data-parameter-panel="ids" role="tabpanel" aria-labelledby="parameter-ids-tab">
+                <div class="field"><label for="parameter-template-ids">新模板 ID</label><textarea class="resize-none" id="parameter-template-ids" rows="5" spellcheck="false" aria-describedby="parameter-ids-help" placeholder="每行一个新模板 ID&#10;lessThr0029&#10;或 原ID=新ID"></textarea><p id="parameter-ids-help">支持不带后缀的 ID；自定义命名可用 原ID=新ID。</p></div>
+                <div class="source-choice field"><label for="parameter-source">读取来源</label><select id="parameter-source"><option value="output">当前输出目录</option><option value="tile">Tile 仓</option><option value="template">模板仓</option></select></div>
+              </div>
+              <div class="import-panel" id="parameter-files-panel" data-parameter-panel="files" role="tabpanel" aria-labelledby="parameter-files-tab" hidden>
+                <input class="visually-hidden-file" id="parameter-template-files" type="file" accept=".bytes" multiple aria-describedby="parameter-files-help">
+                <label class="drop-zone" id="parameter-drop-zone" for="parameter-template-files"><svg aria-hidden="true"><use href="/assets/icons.svg#upload"></use></svg><strong>拖入新模板 _m.bytes</strong><span>或点击选择文件</span></label><p class="field-help" id="parameter-files-help">可批量追加。单文件最多 32 MB。</p><ul class="file-list" id="parameter-files-list" aria-label="待读取的新模板"><li class="empty-row">尚未选择模板。</li></ul>
+                <details class="optional-section" id="parameter-file-associations-details"><summary>原、新模板关联（可选）</summary><div class="field"><label for="parameter-file-associations">原ID=新ID</label><textarea class="resize-none" id="parameter-file-associations" rows="3" spellcheck="false" aria-describedby="parameter-file-associations-help" placeholder="hr0029=custom0029&#10;每行一组关联"></textarea><p id="parameter-file-associations-help">有产物记录时无需填写。无法自动关联时，填写原 ID 与文件内部的新模板 ID。</p></div></details>
+              </div>
+              <div class="import-panel" id="parameter-job-panel" data-parameter-panel="job" role="tabpanel" aria-labelledby="parameter-job-tab" hidden>
+                <div class="field"><label for="parameter-job">已生成任务</label><select id="parameter-job"><option value="">请选择已生成任务</option></select><p>使用任务中已通过验收的新模板。</p></div>
+              </div>
+              <details class="optional-section" id="parameter-matching-options"><summary>模板匹配设置（可选）</summary><p class="field-help">默认自动识别前后缀。匹配不准确时可指定要去掉的文字；原模板自带的版本号会保留。</p><div class="form-grid"><div class="field"><label for="parameter-strip-prefix">去掉新模板名前缀</label><input id="parameter-strip-prefix" type="text" spellcheck="false" placeholder="自动识别，例如 noT"></div><div class="field"><label for="parameter-strip-suffix">去掉新模板名后缀</label><input id="parameter-strip-suffix" type="text" spellcheck="false" placeholder="自动识别，例如 _new"></div></div></details>
+              <div class="parameter-source-actions"><button class="secondary-button" id="parameter-resolve-button" type="button" disabled hidden>读取模板</button><button class="primary-button" id="parameter-calculate-button" type="submit" disabled>计算新参数</button><button class="text-button" id="parameter-cancel-button" type="button" hidden>停止等待</button><button class="secondary-button" id="parameter-recover-button" type="button" hidden>恢复处理结果</button><span class="file-meta" id="parameter-selection-summary" role="status" hidden></span></div>
+              <div class="parameter-task-progress" id="parameter-task-progress" hidden><p id="parameter-task-stage" role="status" aria-live="polite"></p><progress id="parameter-task-meter" aria-labelledby="parameter-task-stage"></progress><small>按整批处理阶段累计进度，全部处理结束后满格；不是耗时或剩余时间估计。</small></div>
+              <ul class="parameter-source-errors" id="parameter-source-errors" hidden></ul>
+              <section class="parameter-match-panel" id="parameter-match-panel" aria-labelledby="parameter-match-title" hidden><h2 id="parameter-match-title">请选择要关联的原模板</h2><p class="field-help">每个新模板可关联多个原模板，分别计算各自关卡参数；不同新模板也可使用同一个原模板。</p><div id="parameter-match-choices"></div><button class="secondary-button" id="parameter-match-recalculate" type="button">按所选匹配重新计算</button></section>
+              <div class="source-status parameter-source-status" id="parameter-source-status"><svg aria-hidden="true"><use href="/assets/icons.svg#folder"></use></svg><span><strong id="parameter-source-label">模板数据源只读</strong><small id="parameter-source-path">等待读取输出目录</small></span></div>
+            </div>
+            <div class="parameter-scope">
+              <div class="card-heading"><h2 class="card-title">配置范围</h2><span class="status-pill warning" id="parameter-config-status">配置未就绪</span></div>
+              <div class="form-grid"><div class="field"><label for="parameter-level-start">起始关卡</label><input id="parameter-level-start" type="number" min="1" step="1" placeholder="不限" aria-describedby="parameter-range-help"></div><div class="field"><label for="parameter-level-end">结束关卡</label><input id="parameter-level-end" type="number" min="1" step="1" placeholder="不限" aria-describedby="parameter-range-help"></div></div>
+              <p class="field-help" id="parameter-range-help">留空匹配全部关卡位置。</p>
+              <div class="parameter-path"><span class="soft-label">配置文件</span><p id="parameter-config-path">等待读取配置路径</p><button class="link-button" type="button" data-route="settings">修改路径</button><button class="text-button" id="parameter-refresh-context" type="button">刷新</button></div>
+              <div class="parameter-scope-actions"><button class="primary-button" id="parameter-calculate-side-button" type="submit" disabled>计算新参数</button></div>
+            </div>
+          </div>
+        </form>
+        <div class="inline-feedback" id="parameter-feedback" role="status" aria-live="polite" hidden><svg aria-hidden="true"><use href="/assets/icons.svg#status"></use></svg><span></span></div>
+        <div class="parameter-result-stack" id="parameter-results" hidden>
+          <section class="card parameter-result-card" aria-labelledby="parameter-mapping-title">
+            <div class="card-heading"><h2 class="card-title" id="parameter-mapping-title">关卡与新模板映射</h2><span class="file-meta" id="parameter-result-summary" role="status"></span></div>
+            <div class="parameter-table-toolbar"><div class="parameter-search"><label class="visually-hidden" for="parameter-search">搜索全部参数结果</label><svg aria-hidden="true"><use href="/assets/icons.svg#search"></use></svg><input id="parameter-search" type="search" placeholder="搜索关卡、模板或参数" autocomplete="off"><button class="icon-button" id="parameter-clear-search" type="button" aria-label="清空参数搜索" hidden><svg aria-hidden="true"><use href="/assets/icons.svg#close"></use></svg></button></div><div class="parameter-selection-actions"><span id="parameter-selection-count" class="file-meta" role="status"></span><button class="text-button" id="parameter-select-all" type="button">选择全部可用结果</button><button class="text-button" id="parameter-clear-selection" type="button">清空选择</button></div></div>
+            <div class="table-scroll parameter-table-scroll" role="region" aria-label="关卡与新模板映射，可横向滚动" tabindex="0"><table class="parameter-mapping-table"><thead><tr><th class="parameter-select-cell"><label class="parameter-check-label"><input id="parameter-select-page" type="checkbox" aria-label="选择当前页可用结果"><span>选择</span></label></th><th>关卡号</th><th>原关卡 ID</th><th>原模板 ID</th><th>新模板 ID</th><th>DupPara1</th><th>DupPara2</th><th>DupPara3</th><th>DupPara4</th><th>DupPara5</th><th>DupPara6</th><th>DupPara7</th><th>DupPara8</th><th>DupPara9</th><th>DupPara10</th><th>状态</th></tr></thead><tbody id="parameter-table-body"></tbody></table></div>
+            <div class="parameter-pagination"><span id="parameter-page-status" class="file-meta" role="status"></span><div><label for="parameter-page-size">每页</label><select id="parameter-page-size"><option value="20">20 行</option><option value="50">50 行</option><option value="100">100 行</option></select><button class="secondary-button" id="parameter-prev-page" type="button">上一页</button><button class="secondary-button" id="parameter-next-page" type="button">下一页</button></div></div>
+          </section>
+          <section class="card parameter-result-card" aria-labelledby="parameter-comparison-title">
+            <div class="card-heading"><h2 class="card-title" id="parameter-comparison-title">新旧副本参数对比</h2><span class="file-meta" id="parameter-comparison-count"></span></div>
+            <div class="table-scroll parameter-table-scroll" role="region" aria-label="仅参数变化的关卡，可横向滚动" tabindex="0"><table class="parameter-comparison-table"><thead><tr><th>关卡号</th><th>原关卡 ID</th><th>原模板 ID</th><th>新模板 ID</th><th>版本</th><th>DupPara1</th><th>DupPara2</th><th>DupPara3</th><th>DupPara4</th><th>DupPara5</th><th>DupPara6</th><th>DupPara7</th><th>DupPara8</th><th>DupPara9</th><th>DupPara10</th></tr></thead><tbody id="parameter-comparison-body"></tbody></table></div>
+            <div class="parameter-pagination"><span class="file-meta" id="parameter-comparison-page-status" role="status"></span><div><button class="secondary-button" id="parameter-comparison-prev" type="button">上一页</button><button class="secondary-button" id="parameter-comparison-next" type="button">下一页</button></div></div>
+          </section>
+          <section class="card" aria-labelledby="parameter-delivery-title">
+            <div class="card-heading"><h2 class="card-title" id="parameter-delivery-title">导出与写入</h2><span class="status-pill neutral" id="parameter-delivery-status">尚未写入</span></div>
+            <label class="parameter-check-label" for="parameter-preserve-level-prefix"><input id="parameter-preserve-level-prefix" type="checkbox" aria-describedby="parameter-preserve-prefix-help"><span>沿用原关卡 ID 前缀</span></label><p class="field-help" id="parameter-preserve-prefix-help">使用各自原关卡 ID 中模板名之前的部分，再拼接新模板 ID；重名自动加 v2、v3，不覆盖已有关卡。</p>
+            <div class="form-grid"><div class="field"><label for="parameter-level-id-rule">新关卡 ID 规则（LevelId）</label><select id="parameter-level-id-rule" aria-describedby="parameter-level-id-help"><option value="prefix">{原关卡ID}</option><option value="template">{新模板ID}</option></select><div class="field" id="parameter-level-id-prefix-field"><label for="parameter-level-id-prefix">自定义前缀（可选）</label><input id="parameter-level-id-prefix" type="text" spellcheck="false" value="lessT" placeholder="留空则不加前缀" aria-describedby="parameter-level-id-help"></div><p id="parameter-level-id-help">自定义前缀 + 所选 ID；前缀留空时仅使用所选 ID。最终名称可在写入预览中核对。</p></div><div class="field"><label class="parameter-check-label" for="parameter-unify-description"><input id="parameter-unify-description" type="checkbox"><span>统一备注（Des）</span></label><label class="visually-hidden" for="parameter-description">新关卡统一备注</label><input id="parameter-description" type="text" disabled placeholder="默认保留原备注" aria-describedby="parameter-description-help"><p id="parameter-description-help">勾选后使用填写内容；留空则写入空备注。</p></div></div>
+            <div class="parameter-delivery-actions"><button class="secondary-button" id="parameter-download-button" type="button">导出参数 XLSX</button><button class="primary-button" id="parameter-preview-button" type="button">一键添加至 config_level.csv</button><span class="file-meta">仅追加新行；原关卡与 config_level_list.csv 保留。</span></div>
+            <p class="parameter-write-result" id="parameter-write-result" role="status" hidden></p>
+          </section>
+        </div>
+      </section>
+
+      <section class="secondary-view" data-view="history" id="history-view" hidden aria-labelledby="history-title">
+        <div class="page-heading">
+          <div><h1 id="history-title" tabindex="-1">运行记录</h1></div>
+          <button class="secondary-button" id="refresh-history" type="button">刷新记录</button>
+        </div>
+        <div class="card">
+          <div class="card-heading"><h2 class="card-title">最近运行</h2></div>
+          <div class="table-scroll" role="region" aria-label="运行记录表，可横向滚动" tabindex="0"><table><thead><tr><th>任务编号</th><th>最后更新时间</th><th>输入模板数</th><th>状态</th><th>操作</th></tr></thead><tbody id="history-table-body"><tr><td colspan="5" class="table-empty">暂无任务记录。</td></tr></tbody></table></div>
+        </div>
+      </section>
+
+      <section class="secondary-view" data-view="settings" id="settings-view" hidden aria-labelledby="settings-title">
+        <div class="page-heading"><div><h1 id="settings-title" tabindex="-1">设置</h1></div></div>
+        <form class="settings-layout" id="settings-form" novalidate>
+          <div class="card">
+            <div class="card-heading"><h2 class="card-title">模板库路径</h2><span class="status-pill neutral" id="settings-binding-status">等待读取</span></div>
+            <div class="field">
+              <label for="settings-tile-path">Tile 仓路径</label>
+              <input id="settings-tile-path" placeholder="/Users/你的用户名/Projects/tile/Tile/Assets/Resources/TileMatchLevelData" name="tile_root" type="text" aria-describedby="settings-tile-help">
+              <p id="settings-tile-help">应以 tile/Tile/Assets/Resources/TileMatchLevelData 结尾。</p>
+            </div>
+            <div class="field">
+              <label for="settings-template-path">模板仓路径</label>
+              <input id="settings-template-path" placeholder="/Users/你的用户名/Projects/tileleveltemplate/Template" name="template_root" type="text" aria-describedby="settings-template-help">
+              <p id="settings-template-help">应以 tileleveltemplate/Template 结尾。</p>
+            </div>
+            <div class="field">
+              <label for="settings-config-root">配置仓库 / CSV 目录</label>
+              <input id="settings-config-root" placeholder="/Users/你的用户名/Projects/ulinkconfig/csv" name="config_root" type="text" aria-describedby="settings-config-help">
+              <p id="settings-config-help">用于一键配置新参数，包含 config_level.csv 与 config_level_list.csv。</p>
+            </div>
+            <button class="secondary-button" id="rediscover-button" type="button">重新发现路径</button>
+          </div>
+          <div class="card">
+            <div class="card-heading"><h2 class="card-title">命名与导出</h2></div>
+            <div class="field">
+              <label for="settings-naming-rule">减少塔默认命名规则</label>
+              <input id="settings-naming-rule" name="naming_rule" type="text" value="lessT{原模板ID}" aria-describedby="settings-naming-help">
+              <p id="settings-naming-help">支持 lessT{原模板ID} 或固定名称；同批重名和已有同名文件会自动加 v2、v3。</p>
+            </div>
+            <div class="field">
+              <label for="settings-increase-naming-rule">增加塔默认命名规则</label>
+              <input id="settings-increase-naming-rule" name="increase_naming_rule" type="text" value="moreT{原模板ID}" aria-describedby="settings-increase-naming-help">
+              <p id="settings-increase-naming-help">默认 moreT{原模板ID}；已存在同名文件时自动顺延 v2、v3。</p>
+            </div>
+            <div class="field">
+              <label for="settings-export-directory">默认导出目录</label>
+              <input id="settings-export-directory" name="output_root" type="text" aria-describedby="settings-export-help">
+              <p id="settings-export-help">用于每次任务的初始值，第三步仍可临时修改。</p>
+            </div>
+            <fieldset class="sync-targets default-sync-targets" aria-describedby="default-sync-help">
+              <legend>默认勾选的同步目标</legend>
+              <label for="default-sync-template"><input id="default-sync-template" name="default_sync_targets" type="checkbox" value="template"><span>模板仓</span></label>
+              <label for="default-sync-tile"><input id="default-sync-tile" name="default_sync_targets" type="checkbox" value="tile"><span>Tile 仓</span></label>
+              <p id="default-sync-help">可不选、选一个或同时选两个；只预选目标，确认同步后才写入。</p>
+            </fieldset>
+          </div>
+          <div class="sticky-actions"><button class="primary-button" id="save-settings-button" type="submit">保存设置</button></div>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="wide-dialog increase-preview-dialog" id="increase-preview-dialog" aria-labelledby="increase-preview-title" aria-describedby="increase-preview-status">
+    <div class="dialog-header"><h2 id="increase-preview-title">增加塔预览</h2><button class="icon-button" type="button" data-close-dialog="increase-preview-dialog" aria-label="关闭增加塔预览"><svg aria-hidden="true"><use href="/assets/icons.svg#close"></use></svg></button></div>
+    <p id="increase-preview-status" class="preview-feedback" role="status" aria-live="polite"></p>
+    <div class="increase-schemes" id="increase-schemes" role="group" aria-label="推荐方案"></div>
+    <p class="field-help" id="increase-preview-facts"></p>
+    <div class="preview-layer-controls"><button type="button" class="secondary-button" id="increase-layer-minus" aria-label="减少一层">−</button><label for="increase-layer">查看层 <span id="increase-layer-value">全部层</span></label><input type="range" id="increase-layer" min="1" max="1" value="1"><button type="button" class="secondary-button" id="increase-layer-plus" aria-label="增加一层">+</button><button type="button" class="text-button" id="increase-layer-all">全部层</button></div>
+    <div class="preview-comparison" id="increase-preview-results" aria-busy="false"><section><h3>原模板</h3><div id="increase-source-board"></div></section><section><h3>新模板 · 可选塔微调</h3><div id="increase-output-board"></div></section></div>
+    <details class="optional-section" id="increase-tower-fields" hidden open><summary>逐塔微调</summary><p class="field-help">选择棋盘中的塔或下方堆号；方向键、按格按钮或拖拽按整数网格移动。修改后以新的服务端验收结果为准。</p><div class="form-grid increase-tower-form">
+      <div class="field"><label for="increase-selected-tower">当前塔</label><select id="increase-selected-tower"></select></div>
+      <div class="field"><label for="increase-tower-count">最终张数</label><input type="number" id="increase-tower-count" min="1" step="1"></div>
+      <div class="field"><label for="increase-tower-direction">方向</label><select id="increase-tower-direction"><option value="0">朝上</option><option value="1">朝左</option><option value="2">朝下</option><option value="3">朝右</option></select></div>
+      <div class="field"><label for="increase-tower-x">位置 X</label><input type="number" id="increase-tower-x" step="1"></div>
+      <div class="field"><label for="increase-tower-y">位置 Y</label><input type="number" id="increase-tower-y" step="1"></div>
+      <label class="checkbox-field" for="increase-mirror-position"><input id="increase-mirror-position" type="checkbox" checked>绑定镜像位置</label>
+      <label class="checkbox-field" for="increase-tower-lock"><input id="increase-tower-lock" type="checkbox">锁定当前塔高度</label>
+    </div><div class="increase-tower-actions"><button type="button" class="secondary-button" data-tower-move="-1,0">左一格</button><button type="button" class="secondary-button" data-tower-move="0,-1">上一格</button><button type="button" class="secondary-button" data-tower-move="0,1">下一格</button><button type="button" class="secondary-button" data-tower-move="1,0">右一格</button><button type="button" class="secondary-button" id="increase-tower-update">更新当前塔</button></div></details>
+    <div class="dialog-actions"><button type="button" class="text-button" id="increase-undo" disabled>撤销微调</button><button type="button" class="text-button" id="increase-reset">恢复打开时参数</button><button type="button" class="secondary-button" id="increase-refresh">重新推荐</button><button type="button" class="primary-button" id="increase-apply" disabled>采用此方案</button></div>
+  </dialog>
+
+  <dialog class="wide-dialog parameter-preview-dialog" id="parameter-preview-dialog" aria-labelledby="parameter-preview-title" aria-describedby="parameter-preview-summary">
+    <div class="dialog-header"><div><h2 id="parameter-preview-title">确认追加关卡配置</h2></div><button class="icon-button" type="button" data-close-dialog="parameter-preview-dialog" aria-label="关闭配置预览"><svg aria-hidden="true"><use href="/assets/icons.svg#close"></use></svg></button></div>
+    <p id="parameter-preview-summary"></p><p class="parameter-preview-path" id="parameter-preview-path"></p>
+    <div class="table-scroll" role="region" aria-label="追加配置预览，可横向滚动" tabindex="0"><table><thead><tr><th>原关卡 ID</th><th>新关卡 ID</th><th>新模板 ID</th><th>备注</th><th>写入状态</th></tr></thead><tbody id="parameter-preview-body"></tbody></table></div>
+    <details class="optional-section"><summary>查看配置差异</summary><pre class="parameter-diff" id="parameter-preview-diff"></pre></details>
+    <div class="inline-feedback is-error" id="parameter-preview-feedback" role="alert" hidden><svg aria-hidden="true"><use href="/assets/icons.svg#warning"></use></svg><span></span></div>
+    <div class="dialog-actions"><button class="secondary-button" id="parameter-preview-cancel" type="button" data-close-dialog="parameter-preview-dialog">取消</button><button class="primary-button" id="parameter-confirm-write" type="button">确认追加</button></div>
+  </dialog>
+
+  <dialog id="binding-dialog" aria-labelledby="binding-dialog-title" aria-describedby="binding-dialog-description">
+    <div class="dialog-header"><div><p class="section-kicker">首次使用</p><h2 id="binding-dialog-title">确认模板库路径</h2></div></div>
+    <p id="binding-dialog-description">工具已根据固定目录后缀自动发现路径。如果找到多个候选，请先选择当前项目；不确定时进入设置修改。</p>
+    <div class="candidate-notice" id="path-discovery-notice" role="status" hidden></div>
+    <div class="candidate-list" id="path-candidate-list" aria-label="模板库路径候选"></div>
+    <dl class="path-list dialog-paths"><div><dt>模板仓</dt><dd id="binding-template-path">等待发现</dd></div><div><dt>Tile 仓</dt><dd id="binding-tile-path">等待发现</dd></div></dl>
+    <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog="binding-dialog" data-route="settings">修改路径</button><button class="primary-button" id="confirm-bindings-button" type="button">确认使用</button></div>
+  </dialog>
+
+  <dialog class="help-dialog" id="help-dialog" aria-labelledby="help-dialog-title" aria-describedby="help-dialog-description">
+    <div class="help-shell">
+      <header class="help-header">
+        <div><h2 id="help-dialog-title">使用说明</h2><p id="help-dialog-description">右侧可连续阅读，目录可跳转到对应章节。</p><p class="help-current">正在查看：<strong id="help-current-topic">首次使用</strong><button class="link-button" type="button" data-help-topic="start">从头开始</button></p></div>
+        <div class="help-header-actions"><div class="help-search"><label class="visually-hidden" for="help-search-input">搜索使用说明</label><svg aria-hidden="true"><use href="/assets/icons.svg#search"></use></svg><input id="help-search-input" type="search" placeholder="搜索使用说明" autocomplete="off"><button class="icon-button" id="clear-help-search" type="button" aria-label="清空说明搜索" hidden><svg aria-hidden="true"><use href="/assets/icons.svg#close"></use></svg></button></div><button class="icon-button" type="button" data-close-dialog="help-dialog" aria-label="关闭使用说明"><svg aria-hidden="true"><use href="/assets/icons.svg#close"></use></svg></button></div>
+      </header>
+      <div class="help-body"><nav id="help-navigation" class="help-navigation" aria-label="使用说明目录"></nav><div class="help-content" id="help-content" tabindex="-1"><p id="help-search-summary" role="status" aria-live="polite" hidden></p><div id="help-reading"></div></div></div>
+    </div>
+  </dialog>
+
+  <dialog class="wide-dialog" id="rerun-dialog" aria-labelledby="rerun-dialog-title" aria-describedby="rerun-dialog-description">
+    <div class="dialog-header"><div><h2 id="rerun-dialog-title">调整参数并重新验收</h2></div><button class="icon-button" type="button" data-close-dialog="rerun-dialog" aria-label="关闭单模板重跑"><svg aria-hidden="true"><use href="/assets/icons.svg#close"></use></svg></button></div>
+    <p id="rerun-dialog-description">只重跑当前模板，其他模板不受影响。可填入已验收方案，也可手动调整。</p>
+    <form id="rerun-form" novalidate>
+      <input id="rerun-template-key" name="template_key" type="hidden">
+      <div class="recommendation-box" id="rerun-recommendations">暂无参数建议。</div>
+      <div class="form-grid">
+        <div class="field"><label for="rerun-min-ratio">塔 Tile 占比下限</label><div class="input-suffix"><input id="rerun-min-ratio" type="number" min="0" max="100" step="0.1" aria-describedby="rerun-min-ratio-help"><span>%</span></div><p id="rerun-min-ratio-help">结果可等于下限；清空塔时上下限都填 0。</p></div>
+        <div class="field"><label for="rerun-ratio">塔 Tile 占比上限</label><div class="input-suffix"><input id="rerun-ratio" type="number" min="0" max="100" step="0.1" aria-describedby="rerun-ratio-help"><span>%</span></div><p id="rerun-ratio-help">可填 0–100%，且不能高于该原模板塔占比；0 为去塔，其余结果严格小于上限。</p></div>
+        <div class="field span-two"><label for="rerun-replenish-type">非塔补牌类型</label><select id="rerun-replenish-type" aria-describedby="rerun-replenish-help"><option value="auto">自动</option><option value="majority_A">以 A Tile 为主</option><option value="majority_B">以 B Tile 为主</option><option value="preserve">与原搬出牌类型一致</option><option value="A">全部补 A</option><option value="B">全部补 B</option></select><p id="rerun-replenish-help">“为主”会用少量另一类补齐三张成组，并邻近原非塔同类。</p><div id="rerun-replenish-guidance" class="replenish-guidance"></div></div>
+        <div class="field"><label for="rerun-strategy">补牌位置策略</label><select id="rerun-strategy" aria-describedby="rerun-strategy-help"><option value="top_first">顶层优先</option><option value="bottom_first">底层优先</option><option value="balanced">五五开</option><option value="seeded_random">随机</option></select><p id="rerun-strategy-help">随机策略使用下方种子。</p></div>
+        <div class="field"><label for="rerun-layer-limit">单层非塔 Tile 建议上限</label><input id="rerun-layer-limit" type="number" min="1" step="1" aria-describedby="rerun-layer-limit-help"><p id="rerun-layer-limit-help">必须为正整数。</p></div>
+        <div class="field"><label for="rerun-max-layers">最多新增层数</label><input id="rerun-max-layers" type="number" min="0" step="1" aria-describedby="rerun-max-layers-help"><p id="rerun-max-layers-help">必须为非负整数。</p></div>
+        <div class="field"><label for="rerun-seed">随机种子</label><input id="rerun-seed" type="number" step="1" aria-describedby="rerun-seed-help"><p id="rerun-seed-help">必须为整数。</p></div>
+        <div class="field"><label for="rerun-new-id">新模板 ID</label><input id="rerun-new-id" type="text" pattern="[A-Za-z0-9_-]+" aria-describedby="rerun-new-id-help"><p id="rerun-new-id-help">仅允许英文字母、数字、下划线和连字符；与其他模板重名时自动加 v2、v3。</p></div>
+      </div>
+      <div class="field"><label for="rerun-retained-counts">逐塔保留数</label><input id="rerun-retained-counts" type="text" aria-describedby="rerun-retained-help" placeholder="例如 3,4,4,3"><p id="rerun-retained-help">留空表示自动分配；填写时用英文逗号分隔非负整数。</p></div>
+      <div class="inline-feedback" id="rerun-feedback" role="status" aria-live="polite" hidden><svg aria-hidden="true"><use href="/assets/icons.svg#status"></use></svg><span></span></div>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog="rerun-dialog">取消</button><button class="primary-button" id="confirm-rerun-button" type="submit">重新生成并验收</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="restart-dialog" aria-labelledby="restart-dialog-title" aria-describedby="restart-dialog-description">
+    <div class="dialog-header"><div><p class="section-kicker">清空当前任务</p><h2 id="restart-dialog-title">确认重新开始</h2></div></div>
+    <p id="restart-dialog-description">这会清除当前页面中的导入、配置和任务引用，不会删除已经导出的文件或修改源模板。</p>
+    <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog="restart-dialog">继续当前任务</button><button class="danger-button" id="confirm-restart-button" type="button">重新开始</button></div>
+  </dialog>
+
+  <dialog class="wide-dialog" id="sync-dialog" aria-labelledby="sync-dialog-title" aria-describedby="sync-dialog-description">
+    <div class="dialog-header"><div><p class="section-kicker">同步计划</p><h2 id="sync-dialog-title">确认模板库同步</h2></div><button class="icon-button" type="button" data-close-dialog="sync-dialog" aria-label="关闭同步预览"><svg aria-hidden="true"><use href="/assets/icons.svg#close"></use></svg></button></div>
+    <p id="sync-dialog-description">请逐项处理内容冲突。内容相同，已存在的文件不会重复覆盖；冲突项只有选择“备份并替换”后才能继续。</p>
+    <div class="sync-plan-list" id="sync-plan-list"><p class="empty-copy">尚未生成同步计划。</p></div>
+    <div class="sync-recovery-copy" aria-live="polite">
+      <p><strong>计划已过期：</strong>目标文件发生变化时，需要重新预览同步。</p>
+      <p><strong>写入恢复：</strong>失败后可能显示“已回滚”；若显示“回滚失败，需要人工处理”，请停止同步并查看日志。</p>
+    </div>
+    <div class="inline-feedback is-error" id="sync-recovery-status" role="alert" hidden><svg aria-hidden="true"><use href="/assets/icons.svg#warning"></use></svg><span></span></div>
+    <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog="sync-dialog">取消</button><button class="primary-button" id="commit-sync-button" type="button" disabled>确认同步</button></div>
+  </dialog>
+
+  <dialog class="wide-dialog" id="export-preview-dialog" aria-labelledby="export-preview-title" aria-describedby="export-preview-description">
+    <div class="dialog-header"><div><p class="section-kicker">本地导出计划</p><h2 id="export-preview-title">确认写入导出目录</h2></div><button class="icon-button" type="button" data-close-dialog="export-preview-dialog" aria-label="关闭导出预览"><svg aria-hidden="true"><use href="/assets/icons.svg#close"></use></svg></button></div>
+    <p id="export-preview-description">已有同名文件会自动加 v2、v3 等后缀，文件名与内部模板 ID 一致；不覆盖已有文件。</p>
+    <p id="export-plan-summary" class="export-plan-summary" role="status"></p>
+    <div class="export-plan-list" id="export-plan-list"><p class="empty-copy">尚未生成导出计划。</p></div>
+    <div class="export-dialog-footer">
+      <div id="export-write-progress" class="export-write-progress" hidden aria-live="polite"><p id="export-write-label"></p><progress id="export-write-bar" max="1" aria-labelledby="export-write-label"></progress></div>
+      <div class="inline-feedback is-error" id="export-plan-status" role="alert" hidden><svg aria-hidden="true"><use href="/assets/icons.svg#warning"></use></svg><span></span></div>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog="export-preview-dialog">返回检查</button><button class="primary-button" id="commit-export-dialog-button" type="button" disabled>确认写入</button></div>
+    </div>
+  </dialog>
+  <dialog id="delivery-completion-dialog" aria-labelledby="completion-title" aria-describedby="completion-description">
+    <div class="dialog-header"><h2 id="completion-title">操作已完成</h2><button class="icon-button" type="button" data-close-dialog="delivery-completion-dialog" aria-label="关闭完成提示"><svg aria-hidden="true"><use href="/assets/icons.svg#close"></use></svg></button></div>
+    <p id="completion-description"></p>
+    <div id="completion-directories" class="completion-directories"></div>
+    <div class="inline-feedback" id="completion-feedback" role="status" aria-live="polite" hidden><svg aria-hidden="true"><use href="/assets/icons.svg#status"></use></svg><span></span></div>
+    <div class="dialog-actions"><button class="primary-button" id="completion-acknowledge" type="button" data-close-dialog="delivery-completion-dialog">我知道了</button></div>
+  </dialog>
+  <dialog class="template-preview-dialog" id="template-preview-dialog" aria-labelledby="template-preview-title" aria-describedby="template-preview-description">
+    <div class="dialog-header"><h2 id="template-preview-title">原模板与新模板对比</h2><button class="icon-button" type="button" data-close-dialog="template-preview-dialog" aria-label="关闭模板对比"><svg aria-hidden="true"><use href="/assets/icons.svg#close"></use></svg></button></div>
+    <p id="template-preview-description">相同编辑器坐标和比例，左右同步切换显示层。</p>
+    <div class="preview-toolbar">
+      <div class="preview-layer-control" role="group" aria-label="查看层控制">
+        <label for="preview-layer" id="preview-layer-prefix" class="preview-layer-prefix">层级</label>
+        <button class="secondary-button preview-unlimited" id="preview-layer-unlimited" type="button" aria-pressed="true" title="显示全部层，增删不限层，新增自动落层">无限制</button>
+        <button class="icon-button" id="preview-layer-minus" type="button" aria-label="减少一层" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+        <input id="preview-layer" type="range" min="0" max="1" step="1" value="0" aria-label="查看与编辑层，0为无限制" disabled>
+        <button class="icon-button" id="preview-layer-plus" type="button" aria-label="增加一层" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg></button>
+        <output id="preview-layer-value" for="preview-layer">全部层</output>
+        <label class="preview-single-control"><input id="preview-single-layer" type="checkbox" disabled>仅看当前层</label>
+        <button class="secondary-button preview-layer-delete" id="preview-delete-layer" type="button" disabled>删除本层</button>
+        <button class="secondary-button preview-layer-delete" id="preview-delete-above" type="button" disabled>删除本层以上</button>
+        <button class="secondary-button preview-edit-button" id="preview-all-layers" type="button" aria-pressed="false" disabled>去编辑</button>
+      </div>
+      <label class="preview-change-control" id="preview-change-control"><input id="preview-mark-changes" type="checkbox" checked>标记挪动 Tile</label>
+    </div>
+    <div id="preview-feedback" role="status" aria-live="polite" class="preview-feedback"></div>
+    <div class="preview-comparison" id="preview-comparison" aria-busy="false">
+      <section class="preview-side"><h3>原模板 <span id="preview-source-id"></span></h3><div id="preview-source-board"></div><p class="preview-board-summary" id="preview-source-summary"></p></section>
+      <section class="preview-side" id="preview-output-side"><h3>新模板 <span id="preview-output-id"></span></h3><div id="preview-translation" class="preview-translation" hidden><div class="preview-translation-actions" role="group" aria-label="整体平移新模板"><span>整体平移</span><button class="icon-button" type="button" data-translate-preview="up" aria-label="新模板整体上移一格" title="每次移动 1 格" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button><button class="icon-button" type="button" data-translate-preview="down" aria-label="新模板整体下移一格" title="每次移动 1 格" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14m-6-6 6 6 6-6"/></svg></button><button class="icon-button" type="button" data-translate-preview="left" aria-label="新模板整体左移一格" title="每次移动 1 格" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M19 12H5m6-6-6 6 6 6"/></svg></button><button class="icon-button" type="button" data-translate-preview="right" aria-label="新模板整体右移一格" title="每次移动 1 格" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button><button class="icon-button" type="button" data-translate-preview="reset" aria-label="复位整体平移" title="复位整体平移" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 10a8 8 0 1 1 1 8M4 4v6h6"/></svg></button></div><p id="preview-translation-status" role="status" aria-live="polite"></p></div><div id="preview-output-board"></div><p class="preview-board-summary" id="preview-output-summary"></p></section>
+    </div>
+    <div class="preview-legend"><span><i class="legend-highlighted"></i>完全无遮盖</span><span><i class="legend-covered"></i>有遮盖</span><span id="preview-move-legend"><i class="legend-moved"></i>挪动 Tile</span><span>高亮按当前显示范围判断</span></div>
+    <details class="preview-moves" id="preview-moves"><summary>查看挪动坐标</summary><div class="table-wrap"><table><thead><tr><th>Tile 序号</th><th>类型</th><th>原坐标 (X,Y,Z)</th><th>新坐标 (X,Y,Z)</th></tr></thead><tbody id="preview-moves-body"></tbody></table></div></details>
+  </dialog>
+  <dialog id="manual-close-dialog" aria-labelledby="manual-close-title" aria-describedby="manual-close-feedback">
+    <div class="dialog-header"><h2 id="manual-close-title">保存本次微调吗？</h2><button type="button" class="icon-button" data-close-dialog="manual-close-dialog" aria-label="返回继续编辑"><svg aria-hidden="true"><use href="/assets/icons.svg#close"></use></svg></button></div>
+    <p id="manual-close-feedback" role="status" aria-live="polite"></p>
+    <div class="dialog-actions"><button type="button" class="row-action" data-close-dialog="manual-close-dialog">继续编辑</button><button type="button" class="secondary-button" id="manual-close-discard">关闭不保存</button><button type="button" class="primary-button" id="manual-close-save">保存后关闭</button></div>
+  </dialog>
+  <dialog id="manual-layer-delete-dialog" aria-labelledby="manual-layer-delete-title" aria-describedby="manual-layer-delete-description">
+    <div class="dialog-header"><h2 id="manual-layer-delete-title">删除这一层的 Tile？</h2><button class="icon-button" type="button" data-close-dialog="manual-layer-delete-dialog" aria-label="取消层删除"><svg aria-hidden="true"><use href="/assets/icons.svg#close"></use></svg></button></div>
+    <p id="manual-layer-delete-description"></p>
+    <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog="manual-layer-delete-dialog">取消</button><button class="primary-button" id="manual-layer-delete-confirm" type="button">确认删除</button></div>
+  </dialog>
+</body>
+</html>

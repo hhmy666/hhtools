@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>config_level.csv 参数配置工具</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="vendor/papaparse.min.js"></script>
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <h1>config_level.csv 参数配置工具</h1>
+        <p class="sub">
+          导入 config_level.csv 后，粘贴关卡 id、模板 id 与 DupPara1~10 参数，再执行修改并导出副本。
+        </p>
+      </header>
+
+      <section class="panel">
+        <div class="row">
+          <button id="btn-import" class="primary">导入 config_level</button>
+          <span id="import-status" class="status">未导入</span>
+        </div>
+        <div class="row">
+          <button id="btn-paste" class="primary" disabled>粘贴关卡id/模板id和参数配置</button>
+          <span id="paste-status" class="status">未粘贴</span>
+        </div>
+        <div class="row">
+          <button id="btn-apply" class="primary" disabled>执行配置修改</button>
+          <span id="apply-status" class="status">等待执行</span>
+        </div>
+        <div class="row">
+          <button id="btn-rule-help" class="ghost">规则解释</button>
+          <span class="status">查看参数生成规则说明</span>
+        </div>
+        <div class="row">
+          <button id="btn-export" class="primary" disabled>导出新 config_level.csv</button>
+          <span id="export-status" class="status">未导出</span>
+        </div>
+        <div class="row">
+          <button id="btn-verify" class="primary">检验修改</button>
+          <span id="verify-status" class="status">未校验</span>
+        </div>
+      </section>
+
+      <section class="tips">
+        <h2>粘贴说明</h2>
+        <ul>
+          <li>第一列为关卡 id，第二列为模板 id，第三列为 DupPara1，依次到第十二列 DupPara10。</li>
+          <li>若仅粘贴 DupPara1，其余列留空，将自动复制 DupPara1 到 DupPara2~10。</li>
+          <li>关卡 id 不存在时会新增对应行，并写入模板 id。</li>
+        </ul>
+      </section>
+    </div>
+
+    <input id="file-input" type="file" accept=".csv" />
+
+    <div id="modal-backdrop" class="modal-backdrop hidden"></div>
+
+    <div id="modal-import" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-body">
+        <h3>导入成功</h3>
+        <p>已成功读取 config_level.csv。</p>
+        <div class="modal-actions">
+          <button data-close="modal-import" class="primary">确认</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-paste" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-body large">
+        <h3>粘贴关卡 id、模板 id 和参数配置</h3>
+        <p class="sub">可直接从 Excel 复制多行多列粘贴到表格中。</p>
+        <div class="table-wrap">
+          <table id="paste-table">
+            <thead>
+              <tr>
+                <th>关卡id</th>
+                <th>模板id</th>
+                <th>DupPara1</th>
+                <th>DupPara2</th>
+                <th>DupPara3</th>
+                <th>DupPara4</th>
+                <th>DupPara5</th>
+                <th>DupPara6</th>
+                <th>DupPara7</th>
+                <th>DupPara8</th>
+                <th>DupPara9</th>
+                <th>DupPara10</th>
+              </tr>
+            </thead>
+            <tbody id="paste-body"></tbody>
+          </table>
+        </div>
+        <div class="modal-actions">
+          <button id="btn-add-row" class="ghost">新增一行</button>
+          <div class="spacer"></div>
+          <button data-close="modal-paste" class="ghost">取消</button>
+          <button id="btn-confirm-paste" class="primary">确认</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-result" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-body">
+        <h3>执行结果</h3>
+        <p id="result-text"></p>
+        <div id="result-details" class="hidden">
+          <p id="result-added"></p>
+          <p id="result-modified"></p>
+        </div>
+        <div class="modal-actions">
+          <button id="btn-result-details" class="ghost">详情</button>
+          <button data-close="modal-result" class="primary">确认</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-rule-select" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-body">
+        <h3>选择执行规则</h3>
+        <label class="rule-option">
+          <input type="radio" name="apply-rule" value="rule0" checked />
+          规则0（通用规则/默认规则）：从副本2开始递减，每2个副本再递减
+        </label>
+        <label class="rule-option">
+          <input type="radio" name="apply-rule" value="rule1" />
+          规则1：未填的副本从上一个副本复制参数
+        </label>
+        <label class="rule-option">
+          <input type="radio" name="apply-rule" value="rule2" />
+          规则2：每 3 个副本递减 ATile/BTile
+        </label>
+        <label class="rule-option">
+          <input type="radio" name="apply-rule" value="rule3" />
+          规则3：每 1 个副本递减 ATile/BTile
+        </label>
+        <label class="rule-option">
+          <input type="radio" name="apply-rule" value="rule4" />
+          规则4：每 2 个副本递减 ATile/BTile
+        </label>
+        <div class="modal-actions">
+          <button data-close="modal-rule-select" class="ghost">取消</button>
+          <button id="btn-confirm-rule" class="primary">确认执行</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-rule-help" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-body large">
+        <h3>参数修改规则说明</h3>
+        <div class="rule-text">
+          <p>规则0（通用规则/默认规则）：从副本2开始：ATile 立刻 -1，然后每 2个副本再 -1；从副本3开始：BTile 立刻 -1，然后每 2个副本再 -1。</p>
+          <p>若填 DupParaN(N≥2)：从副本N起 ATile 先 -1，之后每2个副本再 -1；从副本N+1起 BTile 先 -1，之后每2个副本再 -1。</p>
+          <p>ATile ≤ 4 或 BTile ≤ 3 时不再减少；若初始值本就小于阈值，则保持原值不被抬高。</p>
+          <hr />
+          <p>规则1：先修改已粘贴的副本参数，其余副本从上一个副本复制参数。</p>
+          <p>示例：只填 DupPara1，则 DupPara2~10 全部复制 DupPara1。</p>
+          <p>示例：填 DupPara1、DupPara2，则 DupPara3~10 全部复制 DupPara2。</p>
+          <p>示例：只填 DupPara2，则 DupPara1 不改，DupPara3~10 全部复制 DupPara2。</p>
+          <hr />
+          <p>规则2：先修改已粘贴的副本参数，再按副本递增递减 ATile/BTile。</p>
+          <p>若填 DupPara1：副本1与副本2保持一致；从副本3起 ATile 先 -1，之后每3个副本再 -1；从副本4起 BTile 先 -1，之后每3个副本再 -1。</p>
+          <p>若填 DupPara2：副本1不改；从副本3起 ATile 先 -1，之后每3个副本再 -1；从副本4起 BTile 先 -1，之后每3个副本再 -1。</p>
+          <p>若填 DupParaN(N≥3)：从副本N起 ATile 先 -1，之后每3个副本再 -1；从副本N+1起 BTile 先 -1，之后每3个副本再 -1。</p>
+          <p>ATile ≤ 4 或 BTile ≤ 3 时不再减少；若初始值本就小于阈值，则保持原值不被抬高。</p>
+          <hr />
+          <p>规则3：每1个副本递减一次（步长=1）。</p>
+          <p>从副本3起 ATile 先 -1，之后每1个副本再 -1；从副本4起 BTile 先 -1，之后每1个副本再 -1。</p>
+          <p>若填 DupParaN(N≥3)：从副本N起 ATile 先 -1，之后每1个副本再 -1；从副本N+1起 BTile 先 -1，之后每1个副本再 -1。</p>
+          <p>ATile ≤ 4 或 BTile ≤ 3 时不再减少；初始值小于阈值不会被抬高。</p>
+          <hr />
+          <p>规则4：每2个副本递减一次（步长=2）。</p>
+          <p>从副本3起 ATile 先 -1，之后每2个副本再 -1；从副本4起 BTile 先 -1，之后每2个副本再 -1。</p>
+          <p>若填 DupParaN(N≥3)：从副本N起 ATile 先 -1，之后每2个副本再 -1；从副本N+1起 BTile 先 -1，之后每2个副本再 -1。</p>
+          <p>ATile ≤ 4 或 BTile ≤ 3 时不再减少；初始值小于阈值不会被抬高。</p>
+        </div>
+        <div class="modal-actions">
+          <button data-close="modal-rule-help" class="primary">确认</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-verify" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-body large">
+        <h3>校验修改</h3>
+        <p class="sub">上传修改前与修改后的 config_level.csv，生成校验表并在线查看。</p>
+        <div class="verify-inputs">
+          <label>
+            修改前文件：
+            <input id="verify-before" type="file" accept=".csv" />
+          </label>
+          <label>
+            修改后副本：
+            <input id="verify-after" type="file" accept=".csv" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button id="btn-run-verify" class="primary">生成校验表</button>
+          <button id="btn-export-verify" class="ghost" disabled>导出校验表.csv</button>
+          <div class="spacer"></div>
+          <button data-close="modal-verify" class="ghost">关闭</button>
+        </div>
+        <p id="verify-summary" class="sub"></p>
+        <div class="table-wrap">
+          <table id="verify-table">
+            <thead id="verify-head"></thead>
+            <tbody id="verify-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

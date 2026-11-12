@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "template_keys": ["hr0029", "xyz009", "tower0001"],
+  "batch_seed": 2026090901,
+  "generation_defaults": {
+    "replacement_sources": "majority_a_on_tie",
+    "allowed_types": ["C", "D", "E", "F", "G", "H", "I", "J"],
+    "total_percent_limit": 35,
+    "max_layer_percent": 50,
+    "max_structure_layer_span": 5,
+    "required_pre_gate_recycles": 1,
+    "first_recycle_lead_tiles": 2,
+    "candidate_count": 8,
+    "quality": {
+      "position": "center",
+      "symmetry": "medium",
+      "density": "compact",
+      "difficulty_target": "fidelity",
+      "experience_archetype": "auto",
+      "special_preset": "none",
+      "online_style_reference": "level_200_300_v1"
+    },
+    "unit_defaults": {
+      "type_count": {"kind": "range", "minimum": 3, "maximum": 4}
+    }
+  },
+  "batch_plans": [
+    {
+      "plan_id": "常规5步",
+      "tower_mode": "disallow",
+      "units": [
+        {
+          "unit_id": "U1",
+          "step": 5
+        }
+      ]
+    }
+  ],
+  "template_rules": [
+    {
+      "template_key": "xyz009",
+      "mode": "replace",
+      "plans": [
+        {
+          "plan_id": "左右5加6",
+          "layout": "x",
+          "units": [
+            {
+              "unit_id": "左侧",
+              "step": 5,
+              "generation": {"type_count": 3, "allowed_types": ["C", "D", "E"]}
+            },
+            {
+              "unit_id": "右侧",
+              "step": 6,
+              "generation": {"type_count": 3, "allowed_types": ["F", "G", "H"]}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "template_key": "tower0001",
+      "mode": "replace",
+      "plans": [
+        {
+          "plan_id": "仅塔内均匀分布",
+          "tower_mode": "only",
+          "tower_generation": {
+            "type_count": 3,
+            "groups_per_type": [1, 1, 2]
+          }
+        }
+      ]
+    }
+  ]
+}

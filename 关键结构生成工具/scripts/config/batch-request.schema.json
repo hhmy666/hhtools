@@ -1,0 +1,279 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.atcloudbox.com/puzzle-tool/batch-request.schema.json",
+  "title": "关键结构生成工具批量请求",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "template_keys", "batch_plans"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "template_keys": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "batch_seed": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615,
+      "description": "可选。省略时由后端安全生成，并在审核快照中锁定；跨进程复现时应显式传回该值。"
+    },
+    "generation_defaults": {"$ref": "#/$defs/generation"},
+    "batch_plans": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {"$ref": "#/$defs/plan"}
+    },
+    "template_rules": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {"$ref": "#/$defs/templateRule"},
+      "default": []
+    }
+  },
+  "$defs": {
+    "structureType": {"type": "string", "enum": ["C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"]},
+    "step": {
+      "oneOf": [
+        {"type": "integer", "minimum": 4, "maximum": 9},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": {"const": "exact"},
+            "value": {"type": "integer", "minimum": 4, "maximum": 9},
+            "policy": {"enum": ["choose_one", "expand_each"], "default": "choose_one"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "minimum", "maximum"],
+          "properties": {
+            "kind": {"enum": ["range", "random"]},
+            "minimum": {"type": "integer", "minimum": 4, "maximum": 9},
+            "maximum": {"type": "integer", "minimum": 4, "maximum": 9},
+            "policy": {"enum": ["choose_one", "expand_each"], "default": "choose_one"}
+          }
+        }
+      ]
+    },
+    "integerChoice": {
+      "description": "结构种类数。range/random 在每个候选槽位按该候选的派生种子分别锁定为一个精确值。",
+      "oneOf": [
+        {"type": "integer", "minimum": 1, "maximum": 12},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": {"const": "exact"},
+            "value": {"type": "integer", "minimum": 1, "maximum": 12}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {"enum": ["range", "random"]},
+            "minimum": {"type": "integer", "minimum": 1, "maximum": 12},
+            "maximum": {"type": "integer", "minimum": 1, "maximum": 12}
+          },
+          "allOf": [
+            {
+              "if": {"properties": {"kind": {"const": "range"}}},
+              "then": {"required": ["minimum", "maximum"]}
+            }
+          ]
+        }
+      ]
+    },
+    "unitGeneration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type_count": {"$ref": "#/$defs/integerChoice"},
+        "groups_per_type": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "integer", "minimum": 1},
+          "description": "自定义每种结构块的组数；只能配合精确 type_count，数组长度必须等于种类数。"
+        },
+        "uniform_groups_per_type": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "每种结构块使用相同组数；0 表示不固定每种组数，将在总数量上限内按候选种子随机分配且每类至少 1 组。支持精确或范围 type_count。每组3格。"
+        },
+        "threshold_type": {"$ref": "#/$defs/structureType"},
+        "allowed_types": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/structureType"}},
+        "count_limit": {"type": "integer", "minimum": 0},
+        "max_layer": {"type": "integer", "minimum": 1},
+        "required_pre_gate_recycles": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "推荐解在首次门槛块三消前恰好完成的其他三消次数。"
+        },
+        "first_recycle_lead_tiles": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2,
+          "description": "仅在回收次数大于 0 时生效；首次三消前至少点击的非成组铺垫块数。"
+        },
+        "preferred_coords": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "array",
+            "prefixItems": [{"type": "integer"}, {"type": "integer"}, {"type": "integer"}],
+            "minItems": 3,
+            "maxItems": 3
+          }
+        }
+      },
+      "not": {
+        "required": ["groups_per_type", "uniform_groups_per_type"]
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "position": {"enum": ["center", "balanced", "unrestricted"]},
+        "symmetry": {"enum": ["strong", "medium", "off"]},
+        "density": {"enum": ["compact", "medium", "dispersed"]},
+        "difficulty_target": {
+          "enum": ["fidelity", "standard", "strong"],
+          "default": "fidelity",
+          "description": "候选难度目标：贴近原模板、标准关键结构或显式强卡点。"
+        },
+        "experience_archetype": {
+          "enum": ["auto", "intrinsic_gate", "board_reveal", "hybrid"],
+          "default": "auto",
+          "description": "整板体验原型：自动、内生门槛、整板揭露或混合。"
+        },
+        "special_preset": {
+          "enum": ["none", "all_types_long_range", "serial_mechanism"],
+          "default": "none",
+          "description": "特殊结构语法；全类型长程型强制单个塔外结构单元与 C–N 12 类×3，串行机关型强制 Z 向 high→low 双单元。"
+        },
+        "long_range_wave_count": {
+          "oneOf": [
+            {"enum": ["auto", "3", "4"]},
+            {"enum": [3, 4]}
+          ],
+          "default": "auto",
+          "description": "全类型长程型的版本化揭露波次；auto 依次尝试 3 波和 4 波。其他特殊预设不得设置为非 auto。"
+        },
+        "online_style_reference": {
+          "enum": ["level_200_300_v1", "off"],
+          "default": "level_200_300_v1",
+          "description": "用于软排序的版本化线上风格参考。"
+        }
+      }
+    },
+    "solverLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_states": {"type": "integer", "minimum": 1},
+        "max_path_count": {"type": "integer", "minimum": 1}
+      }
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replacement_sources": {
+          "oneOf": [
+            {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["A", "B"]}},
+            {"const": "majority_a_on_tie"},
+            {"const": "prefer_a_else_b", "deprecated": true}
+          ],
+          "default": "majority_a_on_tie",
+          "description": "默认按原模板实际 A/B Tile 总数选择数量较多的一类，数量相同时选 A。数组值可显式指定仅 A、仅 B 或 A+B；旧请求显式使用 prefer_a_else_b 时仍保留原语义：有可用 A 就只替换 A，没有可用 A 才改用 B。"
+        },
+        "allowed_types": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/structureType"}},
+        "total_count_limit": {"type": "integer", "minimum": 0},
+        "automatic_group_max_difference": {"type": "integer", "minimum": 0, "default": 3, "description": "自动分配时各类组数最大差值；0 表示完全均匀，手动组数不受影响。"},
+        "total_count_minimum": {"type": "integer", "minimum": 0, "default": 0, "description": "本次新增结构块的数量下限（格），0 表示不设下限。完整三消组使实际数量向上取整到 3 的倍数；不得超过有效上限。"},
+        "total_percent_minimum": {"type": "number", "minimum": 0, "maximum": 100, "description": "结构块占比下限；分母与数量上限的占比口径一致，按格数向上取整再满足完整三消组。显式 0 保留占比模式；与非零 total_count_minimum 互斥。"},
+        "total_percent_limit": {"type": "number", "exclusiveMinimum": 0, "maximum": 100},
+        "max_layer": {"type": "integer", "minimum": 1},
+        "max_layer_percent": {"type": "number", "exclusiveMinimum": 0, "maximum": 100},
+        "max_structure_layer_span": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "新增结构块最高层与最低层的最大差值；省略表示不限制。"
+        },
+        "min_same_type_layer_span": {"type": "integer", "minimum": 0, "default": 0, "description": "每种新增结构类型最高层减最低层的最小差值；0 不限制，旧配置省略为 0，新界面默认 2。仍受全局最大层间距约束。"},
+        "required_pre_gate_recycles": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "应用于各谜题单元：推荐解在首次门槛块三消前恰好完成的其他三消次数。"
+        },
+        "first_recycle_lead_tiles": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2,
+          "description": "仅在回收次数大于 0 时生效；首次三消前至少点击的非成组铺垫块数。"
+        },
+        "quality": {"$ref": "#/$defs/quality"},
+        "precision_mode": {
+          "type": "boolean",
+          "default": false,
+          "description": "精准模式只保留通过全部参数硬规则、难度目标及中/低机制压力验证的候选；预算内不足时不以未达标候选补齐。"
+        },
+        "candidate_count": {"type": "integer", "minimum": 1, "maximum": 20, "default": 6},
+        "attempt_budget": {"type": "integer", "minimum": 1, "maximum": 100000, "default": 2000},
+        "assignment_attempts": {"type": "integer", "minimum": 1},
+        "solver_limits": {"$ref": "#/$defs/solverLimits"},
+        "unit_defaults": {"$ref": "#/$defs/unitGeneration"}
+      },
+      "allOf": [{
+        "if": {"required": ["total_percent_minimum"]},
+        "then": {"properties": {"total_count_minimum": {"const": 0}}}
+      }]
+    },
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step"],
+      "properties": {
+        "unit_id": {"type": "string"},
+        "step": {"$ref": "#/$defs/step"},
+        "generation": {"$ref": "#/$defs/unitGeneration"}
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan_id"],
+      "properties": {
+        "plan_id": {"type": "string", "minLength": 1},
+        "units": {"type": "array", "maxItems": 2, "items": {"$ref": "#/$defs/unit"}, "default": []},
+        "layout": {"enum": ["single", "x", "y", "z"]},
+        "tower_mode": {"enum": ["disallow", "allow", "only"], "default": "disallow"},
+        "serial_difficulty": {"enum": ["harder_low", "easier_low", "unrestricted"], "default": "harder_low"},
+        "generation": {"$ref": "#/$defs/generation"},
+        "tower_generation": {"$ref": "#/$defs/unitGeneration"}
+      }
+    },
+    "templateRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["template_key", "mode"],
+      "properties": {
+        "template_key": {"type": "string", "minLength": 1},
+        "mode": {"enum": ["use_batch", "replace", "append", "skip"]},
+        "plans": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/plan"}, "default": []}
+      }
+    }
+  }
+}

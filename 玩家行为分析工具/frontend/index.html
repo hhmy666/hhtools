@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#f4f7fb" />
+    <title>玩家行为分析工具</title>
+    <link rel="stylesheet" href="/assets/styles.css?v=20260920c" />
+    <script src="/assets/app.js?v=20260920c" defer></script>
+  </head>
+  <body>
+    <!-- The icon paths below follow the Lucide outline vocabulary and are decorative. -->
+    <svg class="svg-defs" aria-hidden="true">
+      <symbol id="i-workbench" viewBox="0 0 24 24"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></symbol>
+      <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></symbol>
+      <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.55V21h-4v-.08A1.7 1.7 0 0 0 8.97 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3.08 14H3v-4h.08A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88L4.2 7.06l2.83-2.83.06.06A1.7 1.7 0 0 0 8.97 4.6 1.7 1.7 0 0 0 10 3.08V3h4v.08A1.7 1.7 0 0 0 15.03 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9 1.7 1.7 0 0 0 20.92 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 15v5h14v-5"/></symbol>
+      <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M9 9h6M9 13h6M9 17h4"/></symbol>
+      <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 2h8l4 4v16H6zM14 2v5h5M9 12h6M9 16h6"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v11H3z"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+      <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2.7 20h18.6z"/><path d="M12 9v4M12 17h.01"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M14 7l5 5-5 5"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M18 12a6 6 0 0 0-10.5-4M6 12a6 6 0 0 0 10.5 4"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></symbol>
+    </svg>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <button class="brand" type="button" data-route="workspace" aria-label="返回分析工作台">
+          <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span>玩家行为分析工具</span>
+        </button>
+        <div class="topbar-actions">
+          <span class="environment-pill is-checking" id="service-status" role="status">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="service-status-text">正在连接本地服务</span>
+          </span>
+          <button class="quiet-button" id="restart-button" type="button" aria-label="重新开始当前分析流程">
+            <svg aria-hidden="true"><use href="#i-refresh" /></svg><span>重新开始</span>
+          </button>
+          <button class="quiet-button" id="open-help" type="button" aria-label="打开使用说明">
+            <svg aria-hidden="true"><use href="#i-book" /></svg><span>使用说明</span>
+          </button>
+        </div>
+      </header>
+
+      <aside class="sidebar" aria-label="主要功能">
+        <nav class="primary-nav">
+          <button class="nav-item is-active" type="button" data-route="workspace" aria-label="分析工作台" aria-current="page">
+            <svg aria-hidden="true"><use href="#i-workbench" /></svg><span>分析工作台</span>
+          </button>
+          <button class="nav-item" type="button" data-route="results" aria-label="结果概览">
+            <svg aria-hidden="true"><use href="#i-table" /></svg><span>结果概览</span>
+          </button>
+          <button class="nav-item" type="button" data-route="history" aria-label="运行记录">
+            <svg aria-hidden="true"><use href="#i-history" /></svg><span>运行记录</span>
+          </button>
+        </nav>
+        <button class="nav-item sidebar-settings" type="button" data-route="settings" aria-label="设置">
+          <svg aria-hidden="true"><use href="#i-settings" /></svg><span>设置</span>
+        </button>
+      </aside>
+
+      <main class="workspace" id="workspace">
+        <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+        <section class="view is-active" data-view="workspace" aria-labelledby="workspace-heading">
+          <h1 class="sr-only" id="workspace-heading">玩家行为分析工作台</h1>
+          <div class="flow-rail">
+            <ol class="stepper" id="stepper" aria-label="分析流程">
+              <li class="is-current" data-step="1"><button type="button" aria-label="步骤 1：玩家数据"><span class="step-index">1</span><span>玩家数据</span></button></li>
+              <li data-step="2"><button type="button" aria-label="步骤 2：行为分析" disabled><span class="step-index">2</span><span>行为分析</span></button></li>
+              <li data-step="3"><button type="button" aria-label="步骤 3：线上指标与排关方案" disabled><span class="step-index">3</span><span>线上指标</span></button></li>
+              <li data-step="4"><button type="button" aria-label="步骤 4：压力分类与候选序列" disabled><span class="step-index">4</span><span>压力分类</span></button></li>
+              <li data-step="5"><button type="button" aria-label="步骤 5：配置副本" disabled><span class="step-index">5</span><span>配置副本</span></button></li>
+            </ol>
+          </div>
+
+          <section class="flow-page is-active" data-flow="1" aria-labelledby="player-import-title">
+            <header class="hero-copy">
+              <h2 id="player-import-title">玩家数据导入</h2>
+              <p>导入一批或多批 TileNum CSV。工具会先检查字段、UID 互斥、关卡覆盖与重复数据，再读取本机配置和模板。</p>
+            </header>
+
+            <div class="import-layout">
+              <article class="card import-card">
+                <header class="card-heading">
+                  <div><span class="section-kicker">玩家单关数据</span><h3>选择数据来源</h3><p class="heading-note">请使用 Redash 查询「玩家单关 TileNum」导出数据。</p></div>
+                  <span class="privacy-note"><svg aria-hidden="true"><use href="#i-shield" /></svg>只在本机处理</span>
+                </header>
+
+                <div class="segmented-control" role="group" aria-label="玩家数据导入方式">
+                  <button class="is-selected" type="button" aria-pressed="true" aria-controls="player-upload-panel" data-source-tab="player-upload">上传 CSV</button>
+                  <button type="button" aria-pressed="false" aria-controls="player-paste-panel" data-source-tab="player-paste">粘贴 CSV</button>
+                </div>
+
+                <div class="source-panel is-active" id="player-upload-panel" data-source-panel="player-upload">
+                  <label class="drop-zone" id="player-drop-zone" for="player-files" tabindex="0">
+                    <svg aria-hidden="true"><use href="#i-upload" /></svg>
+                    <strong>拖入一个或多个玩家单关 CSV</strong>
+                    <span>也可以点击选择；多批数据需要保持相同字段且 UID 互斥</span>
+                  </label>
+                  <input class="sr-only" id="player-files" type="file" accept=".csv,text/csv" multiple />
+                  <div class="file-list" id="player-file-list" aria-live="polite"></div>
+                </div>
+
+                <div class="source-panel" id="player-paste-panel" data-source-panel="player-paste" hidden>
+                  <label class="field-label" for="player-paste">完整 CSV 内容</label>
+                  <textarea class="resize-none" id="player-paste" rows="10" spellcheck="false" placeholder="粘贴包含表头的完整 CSV；粘贴模式一次只接受一份数据。"></textarea>
+                  <div class="field-hint"><span id="player-paste-count">0 行 · 0 字符</span><span>不会上传到网络</span></div>
+                </div>
+
+                <div class="form-feedback is-hidden" id="player-feedback" role="status" aria-live="polite"></div>
+                <button class="primary-button full-width" id="player-preflight-button" type="button" disabled>
+                  <span>检查玩家数据</span><svg aria-hidden="true"><use href="#i-arrow" /></svg>
+                </button>
+              </article>
+
+              <aside class="support-stack" aria-label="玩家数据要求和路径状态">
+                <section class="card requirement-card">
+                  <header class="minor-heading"><svg aria-hidden="true"><use href="#i-list" /></svg><h3>导出时请保持这些口径</h3></header>
+                  <ul class="requirement-list">
+                    <li><b>推荐样本</b><span>同产品、平台、版本范围、日期和关卡区间，只改变稳定哈希排名区间。</span></li>
+                    <li><b>多批 UID 互斥</b><span>同一 UID 出现在多个文件会阻断，避免重复加权。</span></li>
+                    <li><b>首局与非首局</b><span>两类都保留并分开分析，不把重试后的新实例当作同一关。</span></li>
+                    <li><b>建议保留 48 列</b><span>尤其保留 replay_info、实例参数、结算状态、背包过程与道具字段。</span></li>
+                  </ul>
+                </section>
+
+                <section class="card path-card">
+                  <header class="minor-heading"><svg aria-hidden="true"><use href="#i-folder" /></svg><h3>本机依赖</h3></header>
+                  <dl class="path-list">
+                    <div><dt>关卡模板</dt><dd id="template-path-status"><span class="state-dot neutral"></span><span>等待服务检查</span></dd></div>
+                    <div><dt>配置仓库</dt><dd id="config-path-status"><span class="state-dot neutral"></span><span>等待服务检查</span></dd></div>
+                    <div><dt>配置快照</dt><dd id="history-ref-status"><span class="state-dot neutral"></span><span>默认使用已审计固定快照</span></dd></div>
+                  </dl>
+                  <button class="text-button" type="button" data-route="settings">检查或修改路径</button>
+                </section>
+              </aside>
+            </div>
+          </section>
+
+          <section class="flow-page" data-flow="2" aria-labelledby="behavior-title">
+            <header class="page-heading">
+              <div><h2 id="behavior-title">还原实时过程并建立行为分层</h2><p id="behavior-page-copy">主分层只使用玩家实时行为；失败、消耗和模板静态特征不会直接定层。</p></div>
+              <div class="heading-actions">
+                <button class="secondary-button" type="button" data-step-back="1">返回玩家数据</button>
+                <button class="primary-button is-hidden" id="behavior-header-download" type="button" data-download="behavior_workbook"><svg aria-hidden="true"><use href="#i-download" /></svg>下载表 1</button>
+              </div>
+            </header>
+
+            <section class="card launch-card" id="player-launch-card">
+              <div class="launch-summary">
+                <span class="success-mark"><svg aria-hidden="true"><use href="#i-check" /></svg></span>
+                <div><span class="section-kicker">预检通过</span><h3 id="player-ready-title">玩家数据可以分析</h3><p id="player-ready-summary">确认后将读取配置和模板，并启动本地后台任务。</p></div>
+              </div>
+              <div class="summary-strip" id="player-preflight-summary"></div>
+              <div class="action-row"><span class="action-note">同一输入、配置与算法版本可重复得到一致结果。</span><button class="primary-button" id="start-player-job" type="button"><svg aria-hidden="true"><use href="#i-play" /></svg><span>开始行为分析</span></button></div>
+            </section>
+
+            <section class="job-layout is-hidden" id="player-job-panel" aria-live="polite">
+              <article class="card job-command">
+                <header class="job-heading">
+                  <span class="job-state-mark"><span class="spinner" id="player-job-spinner"></span><svg class="is-hidden" id="player-job-icon" aria-hidden="true"><use href="#i-check-circle" /></svg></span>
+                  <div><span class="section-kicker" id="player-job-kicker">后台分析任务</span><h3 id="player-job-title">正在准备输入快照</h3><p id="player-job-message">任务创建后可切换到其他页面，运行状态不会丢失。</p></div>
+                  <span class="job-id" id="player-job-id">—</span>
+                </header>
+                <div class="job-progress" id="player-job-progress-block">
+                  <div class="job-progress-copy">
+                    <strong id="player-job-progress-label">等待真实进度</strong>
+                    <span id="player-job-progress-count">任务启动后显示已处理数量</span>
+                  </div>
+                  <progress id="player-job-progress" max="100" aria-label="玩家实时行为分析进度"></progress>
+                </div>
+                <ol class="stage-list" id="player-stage-list"></ol>
+              </article>
+              <aside class="card log-card">
+                <header class="minor-heading"><svg aria-hidden="true"><use href="#i-list" /></svg><h3>最近日志</h3></header>
+                <ol class="log-list" id="player-log-list"><li>等待任务开始</li></ol>
+              </aside>
+            </section>
+
+            <section class="result-section is-hidden" id="behavior-result">
+              <div class="kpi-grid" id="behavior-kpis"></div>
+              <div class="result-grid">
+                <article class="card chart-card">
+                  <header class="card-heading"><div><span class="section-kicker">首局关卡标签</span><h3>首局行为差异分布</h3></div><span class="scope-note">不按四分位硬切</span></header>
+                  <div class="layer-distribution" id="layer-distribution"></div>
+                  <div class="result-guidance" aria-live="polite">
+                    <div class="guidance-copy"><strong id="behavior-next-title">下一步：叠加线上结果指标</strong><span id="behavior-next-copy">导入同关卡区间的副本看板 CSV，判断过程压力与消耗、失败流失是否一致。</span></div>
+                    <div class="guidance-actions">
+                      <button class="secondary-button" id="behavior-add-samples" type="button">追加玩家样本</button>
+                      <button class="primary-button" id="behavior-next-button" type="button" data-go-step="3">导入线上指标<svg aria-hidden="true"><use href="#i-arrow" /></svg></button>
+                    </div>
+                  </div>
+                </article>
+                <article class="card insight-card">
+                  <header class="card-heading"><div><span class="section-kicker">行为证据</span><h3>本批次主要差异维度</h3></div></header>
+                  <ul class="insight-list" id="behavior-insights"></ul>
+                </article>
+              </div>
+              <article class="card table-card">
+                <header class="table-toolbar"><div><span class="section-kicker">结果预览</span><h3>关卡行为分层</h3></div><label class="search-field"><span class="sr-only">筛选关卡结果</span><input id="behavior-search" type="search" placeholder="搜索关卡号、模板或标签" /></label></header>
+                <div class="table-scroll"><table><thead id="behavior-table-head"></thead><tbody id="behavior-table-body"></tbody></table></div>
+                <footer class="table-footer" id="behavior-table-footer">等待结果</footer>
+              </article>
+              <section class="artifact-panel card" aria-label="表 1 审计下载">
+                <header class="card-heading"><div><span class="section-kicker">可追溯审计</span><h3>阶段一明细下载</h3></div><span class="scope-note">每项单独保留</span></header>
+                <div class="artifact-list" id="behavior-artifact-list"></div>
+              </section>
+            </section>
+          </section>
+
+          <section class="flow-page" data-flow="3" aria-labelledby="online-import-title">
+            <header class="page-heading">
+              <div><h2 id="online-import-title">叠加线上指标并选择排关方案</h2><p>线上指标按进度位聚合；用整段序列的中位数与 MAD 定分档，再按你选择的心流方案生成候选序列。</p></div>
+              <button class="secondary-button" type="button" data-step-back="2">返回行为结果</button>
+            </header>
+            <div class="import-layout">
+              <article class="card import-card">
+                <header class="card-heading"><div><span class="section-kicker">关卡副本数据</span><h3>导入线上看板 CSV</h3></div><span class="privacy-note"><svg aria-hidden="true"><use href="#i-shield" /></svg>源文件只读</span></header>
+                <div class="segmented-control" role="group" aria-label="线上数据导入方式">
+                  <button class="is-selected" type="button" aria-pressed="true" aria-controls="online-upload-panel" data-source-tab="online-upload">上传 CSV</button>
+                  <button type="button" aria-pressed="false" aria-controls="online-paste-panel" data-source-tab="online-paste">粘贴 CSV</button>
+                </div>
+                <div class="source-panel is-active" id="online-upload-panel" data-source-panel="online-upload">
+                  <label class="drop-zone compact" id="online-drop-zone" for="online-file" tabindex="0">
+                    <svg aria-hidden="true"><use href="#i-database" /></svg><strong>拖入 Tile 关卡副本数据 CSV</strong><span>只接受一份，与表 1 的关卡区间保持一致</span>
+                  </label>
+                  <input class="sr-only" id="online-file" type="file" accept=".csv,text/csv" />
+                  <div class="file-list" id="online-file-list" aria-live="polite"></div>
+                </div>
+                <div class="source-panel" id="online-paste-panel" data-source-panel="online-paste" hidden>
+                  <label class="field-label" for="online-paste">完整 CSV 内容</label>
+                  <textarea class="resize-none" id="online-paste" rows="10" spellcheck="false" placeholder="粘贴包含表头的完整线上副本数据。"></textarea>
+                  <div class="field-hint"><span id="online-paste-count">0 行 · 0 字符</span><span>百分比与 0–1 小数均可识别</span></div>
+                </div>
+                <div class="form-feedback is-hidden" id="online-feedback" role="status" aria-live="polite"></div>
+                <button class="primary-button full-width" id="online-preflight-button" type="button" disabled><span>检查并按所选方案生成</span><svg aria-hidden="true"><use href="#i-arrow" /></svg></button>
+              </article>
+              <aside class="support-stack">
+                <section class="card requirement-card">
+                  <header class="minor-heading"><svg aria-hidden="true"><use href="#i-list" /></svg><h3>线上关卡数据所需字段</h3></header>
+                  <div class="field-chip-list"><span>level_index</span><span>level_id</span><span>level_template_id</span><span>进入人数</span><span>人均消耗</span><span>失败流失</span></div>
+                  <p class="support-copy">同一关展示进入人数最大的 ID / 模板组合；消耗与失败流失按进入人数加权。当前第二阶段要求与表 1 对齐的连续 100 关；缺关、负权重和重复聚合口径会阻断。</p>
+                </section>
+                <section class="card strategy-card" aria-labelledby="strategy-title">
+                  <header class="minor-heading"><svg aria-hidden="true"><use href="#i-list" /></svg><h3 id="strategy-title">候选序列排列方案</h3></header>
+                  <label class="setting-field strategy-select"><span>关卡标签聚合方式</span><select id="level-label-method" aria-describedby="level-label-method-description"><option value="weighted_all_instances">方法一｜全部首局实例玩家加权</option><option value="dominant_online_duplicate">方法二｜进入人数最多副本代表</option></select></label>
+                  <p class="support-copy" id="level-label-method-description">方法一反映进度位总体体验；方法二取线上进入人数最多的副本首局稳定标签，并在报表中注明副本号。</p>
+                  <label class="setting-field strategy-select"><span>生成推荐序列前请选择</span><select id="sequence-strategy" aria-describedby="sequence-strategy-description"><option value="dual_peak">方案一｜双峰阶梯（当前口径）</option><option value="spiral_flow">方案二｜十关螺旋心流</option><option value="single_ramp">方案三｜单峰渐进</option><option value="diversity_guard">方案四｜多样性保护</option></select></label>
+                  <div class="strategy-pattern" id="sequence-strategy-pattern" aria-label="十关节奏示意"></div>
+                  <p class="support-copy" id="sequence-strategy-description"></p>
+                  <p class="strategy-rule" id="sequence-strategy-rule"></p>
+                </section>
+                <section class="card reminder-card">
+                  <span class="reminder-icon"><svg aria-hidden="true"><use href="#i-info" /></svg></span>
+                  <div><h3>这一步不是重新定义压力</h3><p>排关主标签以实时行为为主。线上消耗与失败流失只用于区分有价值挑战、超难高危和建议优化的负面关。</p></div>
+                </section>
+              </aside>
+            </div>
+          </section>
+
+          <section class="flow-page" data-flow="4" aria-labelledby="classification-title">
+            <header class="result-heading">
+              <div><h2 id="classification-title">关卡压力分类与候选序列</h2><p id="classification-result-copy">保留原关卡身份，按已选心流方案给出压力标签、处理建议和候选位置。</p></div>
+              <div class="heading-actions"><button class="secondary-button" type="button" data-download="classification_duplicates"><svg aria-hidden="true"><use href="#i-download" /></svg>下载关卡副本标签</button><button class="primary-button" type="button" data-download="classification_workbook"><svg aria-hidden="true"><use href="#i-download" /></svg>下载关卡分类与推荐序列</button></div>
+            </header>
+            <section class="card classification-progress is-hidden" id="classification-progress" aria-live="polite">
+              <span class="job-state-mark"><span class="spinner" id="classification-spinner"></span><svg class="is-hidden" id="classification-status-icon" aria-hidden="true"><use href="#i-check-circle" /></svg></span>
+              <div><span class="section-kicker">线上指标任务</span><h3 id="classification-progress-title">正在聚合副本指标</h3><p id="classification-progress-copy">将按进入人数加权，并用序列中位数与 MAD 计算消耗、失败流失分档。</p></div>
+              <span class="job-id" id="classification-job-id">—</span>
+            </section>
+            <div id="classification-result-content">
+              <div class="kpi-grid" id="classification-kpis"></div>
+              <article class="card legend-card">
+                <header class="card-heading"><div><span class="section-kicker">统一图例</span><h3>排关压力标签</h3></div><span class="scope-note">同标签同颜色</span></header>
+                <div class="tag-legend" id="tag-legend"></div>
+              </article>
+              <article class="card table-card">
+                <header class="table-toolbar"><div><span class="section-kicker">候选排关结果</span><h3>原序列与推荐序列</h3></div><label class="search-field"><span class="sr-only">筛选三维分类结果</span><input id="classification-search" type="search" placeholder="搜索关卡号、ID、模板或标签" /></label></header>
+                <div class="table-scroll"><table><thead id="classification-table-head"></thead><tbody id="classification-table-body"></tbody></table></div>
+                <footer class="table-footer" id="classification-table-footer">等待结果</footer>
+              </article>
+              <section class="boundary-callout" aria-label="结论边界"><svg aria-hidden="true"><use href="#i-info" /></svg><div><strong>推荐序列是测试候选，不是自动上线结论</strong><span>工具会执行所选方案的槽位与约束，但还需检查相邻节奏、连续高压、模板重复与人工体验；最终应通过序列专项测试验证。</span></div></section>
+              <div class="next-step-card"><div><strong>最后一步：导出可复查的配置副本</strong><span>只会按推荐位置移动四个关卡 ID 字段，源配置文件不会被修改。</span></div><button class="primary-button" type="button" data-go-step="5">整理配置副本<svg aria-hidden="true"><use href="#i-arrow" /></svg></button></div>
+            </div>
+          </section>
+
+          <section class="flow-page" data-flow="5" aria-labelledby="config-export-title">
+            <header class="result-heading">
+              <div><h2 id="config-export-title">配置副本与重排对照</h2><p>读取 <code>config_level_list.csv</code> 后导出副本；不会修改 ulinkconfig 中的源文件。</p></div>
+              <div class="heading-actions"><button class="secondary-button" type="button" data-step-back="4">返回分类结果</button><button class="primary-button" type="button" data-download="config_level_list_copy"><svg aria-hidden="true"><use href="#i-download" /></svg>下载配置副本</button></div>
+            </header>
+            <article class="card config-export-card" id="config-export-card">
+              <div class="config-export-mark"><svg aria-hidden="true"><use href="#i-shield" /></svg></div>
+              <div><span class="section-kicker">只读导出</span><h3 id="config-export-status">等待关卡压力分类完成</h3><p id="config-export-copy">完成分类后会生成 config_level_list 副本；待优化关保留原位但四列关卡 ID 留空，其余关正常排位。</p></div>
+              <div class="config-export-actions"><button class="secondary-button" type="button" data-download="classification_workbook"><svg aria-hidden="true"><use href="#i-download" /></svg>下载关卡重排对照表</button></div>
+            </article>
+            <div class="result-grid config-rule-grid">
+              <article class="card insight-card"><header class="card-heading"><div><span class="section-kicker">会移动的字段</span><h3>仅四列</h3></div></header><ul class="plain-list"><li><code>LevelId</code></li><li><code>DDALevelId1</code></li><li><code>DDALevelId2</code></li><li><code>DDALevelId3</code></li></ul></article>
+              <article class="card insight-card"><header class="card-heading"><div><span class="section-kicker">会被保留的内容</span><h3>其余内容原样保留</h3></div></header><p class="support-copy">表头、类型行、中文说明行、其他字段和源文件都不写回；导出的是单独副本，附带原关卡号与新位置的审计表。</p></article>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" data-view="results" aria-labelledby="results-heading">
+          <header class="page-heading"><div><h1 id="results-heading">结果概览</h1><p>从当前任务快速回到表 1 或表 2；切换页面不会中断后台分析。</p></div></header>
+          <div class="empty-state card" id="results-empty"><svg aria-hidden="true"><use href="#i-table" /></svg><h2 id="results-empty-title">还没有完成的分析</h2><p id="results-empty-copy">先在分析工作台导入玩家数据并完成预检。</p><button class="secondary-button" type="button" data-route="workspace" id="results-empty-action">返回工作台</button></div>
+          <div class="result-links is-hidden" id="result-links">
+            <button class="result-link-card card" id="open-behavior-result" type="button"><span class="result-link-index">01</span><span><b>实时行为分层</b><small>查看 L4–L0 / P、行为维度和稳定性</small></span><svg aria-hidden="true"><use href="#i-chevron" /></svg></button>
+            <button class="result-link-card card" id="open-classification-result" type="button"><span class="result-link-index">02</span><span><b>关卡压力分类与候选序列</b><small>查看压力标签、副本差异、处理建议与推荐位置</small></span><svg aria-hidden="true"><use href="#i-chevron" /></svg></button>
+            <button class="result-link-card card" id="open-config-result" type="button"><span class="result-link-index">03</span><span><b>配置副本与重排对照</b><small>下载仅移动四列 ID 的 config_level_list 副本</small></span><svg aria-hidden="true"><use href="#i-chevron" /></svg></button>
+          </div>
+        </section>
+
+        <section class="view" data-view="history" aria-labelledby="history-heading">
+          <header class="page-heading"><div><h1 id="history-heading">运行记录</h1><p>只展示本机任务目录中可恢复的分析；源 CSV 不会被复制到外部服务。</p></div><button class="secondary-button" id="refresh-history" type="button"><svg aria-hidden="true"><use href="#i-refresh" /></svg>刷新</button></header>
+          <article class="card history-card"><div class="history-table" id="history-list"><div class="empty-state compact"><svg aria-hidden="true"><use href="#i-history" /></svg><h2>暂无运行记录</h2><p>完成一次分析后会在这里显示任务状态和导出入口。</p></div></div></article>
+        </section>
+
+        <section class="view" data-view="settings" aria-labelledby="settings-heading">
+          <header class="page-heading"><div><h1 id="settings-heading">路径与复现设置</h1><p>工具只读访问模板与配置；任务中间文件只写入工具自己的运行数据目录。</p></div></header>
+          <div class="settings-layout">
+            <article class="card settings-card">
+              <header class="card-heading"><div><span class="section-kicker">仓库路径</span><h3>数据依赖</h3></div></header>
+              <label class="setting-field"><span>关卡模板目录</span><input id="template-path" placeholder="/Users/你的用户名/Projects/tile/Tile/Assets/Resources/TileMatchLevelData" type="text" spellcheck="false" autocomplete="off" /><small>填写包含 _m.bytes 的 TileMatchLevelData 目录。</small></label>
+              <label class="setting-field"><span>配置仓库或 CSV 目录</span><input id="config-path" placeholder="/Users/你的用户名/Projects/ulinkconfig/csv" type="text" spellcheck="false" autocomplete="off" /><small>用于关卡、Tile、DDA 与资产映射。</small></label>
+              <label class="setting-field"><span>配置快照口径</span><select id="history-ref"><option value="historical">历史固定快照（推荐）</option><option value="current">当前仓库检出版本</option></select><small>historical 使用已审计固定提交 4eac5d… / 5022d0…；只有明确分析当前配置时才选择 current。</small></label>
+              <div class="action-row"><button class="secondary-button" id="reset-paths" type="button">恢复默认路径</button><button class="primary-button" id="save-settings" type="button">保存设置</button></div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog class="help-dialog" id="help-dialog" aria-labelledby="help-title">
+      <div class="dialog-shell">
+        <header class="dialog-header"><div><h2 id="help-title">使用说明</h2><p>从 Redash 导出到配置副本，一次完整分析分五步。</p></div><button class="icon-button" type="button" data-close-dialog aria-label="关闭使用说明"><svg aria-hidden="true"><use href="#i-x" /></svg></button></header>
+        <div class="dialog-body">
+          <nav class="help-nav" aria-label="使用说明章节">
+            <a href="#help-prepare">1. 准备数据</a><a href="#help-behavior">2. 行为分析</a><a href="#help-online">3. 线上指标</a><a href="#help-sequence">4. 排列方案</a><a href="#help-output">5. 理解结果</a><a href="#help-boundary">边界与排查</a>
+          </nav>
+          <div class="help-content">
+            <section id="help-prepare"><span class="help-index">01</span><div><h3>准备玩家单关 TileNum 数据</h3><p>请使用 Redash 查询「玩家单关 TileNum」导出数据。从同一产品、平台、版本范围、日期口径和关卡区间导出多批 CSV。扩样时只改变稳定哈希排名区间；不同文件的 UID 必须互斥。建议保留完整 48 列，尤其是 replay_info、level_status、关卡实例参数、背包过程和道具字段。</p><ul><li>通关与正常失败都要保留，才能分析失败前的行为诱因。</li><li>正常结算但 replay_info 为空的行会被跳过并计入质量审计，不会阻断其他有效对局；只有全部正常结算对局都无法还原时才会阻断。</li><li>首局与非首局均有价值，但会分开分析；重试后参数和图案变化视作新的关卡实例。</li><li>分析完成后仍可追加玩家样本；未刷新页面时会保留原文件，新文件合并预检后按全部输入重算。若浏览器已刷新，请重新选择原批次与新增批次文件。</li><li>异常退出、未知状态只进入质量审计，不参与主分层。</li></ul></div></section>
+            <section id="help-behavior"><span class="help-index">02</span><div><h3>预检后运行实时行为分析</h3><p>工具先校验 Schema、UID、覆盖范围和重复数据；通过后读取本机配置与模板，解析 interval_ms#action_id[:tile_nums]，累计得到局内时间，并还原每一步可见牌、背包、消除和遮挡变化。</p><ul><li>主分层比较同一玩家在不同关的相对变化，再检验其他玩家是否复刻；不会直接按关卡四分位数切层。</li><li>重点行为轴包括节奏停滞、背包压力、路径压缩、认知停顿、选择陷阱、道具依赖和玩家间分歧。</li><li>活动或限时自动生效的背包 +1 不算玩家主动道具选择；主动使用与自动生效必须分开。</li></ul></div></section>
+            <section id="help-online"><span class="help-index">03</span><div><h3>导入线上关卡副本数据</h3><p>完成表 1 后，导入同关卡范围的副本看板 CSV。当前第二阶段要求恰好覆盖与表 1 对齐的连续 100 关。至少需要 level_index、level_id、level_template_id、进入人数、人均消耗和失败流失；消耗与流失按进入人数加权，展示 ID 与模板取该关进入人数最大的组合。</p><ul><li>表 1 的 100 关都必须得到可分类的压力标签；存在“样本覆盖不足”时会先阻断表 2，并提示继续补充互不重复的玩家批次。</li><li>失败流失可使用百分数字符串或 0–1 小数。</li><li>基线来自整段序列的中位数和 MAD，不使用均值二分，也不强制每层数量相等。</li><li>缺关、非连续关卡、负进入人数、无效数值或混入重复聚合口径会在预检阶段阻断。</li></ul></div></section>
+            <section id="help-sequence"><span class="help-index">04</span><div><h3>选择标签口径与候选序列</h3><p>方法一按所有首局实例的玩家数加权，反映整个进度位的总体体验；方法二取线上进入人数最多的副本首局稳定标签，报表会同时保留两种结果和来源副本号。</p><ul><li><b>方案一｜双峰阶梯：</b>风险桶依次进入尾号 0、1、2、6、3、7、4、8、5、9。</li><li><b>方案二｜十关螺旋心流：</b>P0 先放尾号0，P2 优先放2/3，P3 优先放4/8，P4 优先放5，P5 优先放9；同标签按原关卡号升序填入该标签的位置优先级，例如 P0 先填 100、110……190，超出后从最早空位继续。</li><li><b>方案三｜单峰渐进：</b>每十关从轻到重连续抬升。</li><li><b>方案四｜多样性保护：</b>保留双峰节奏，并在不打乱同标签原关卡号顺序的前提下检查相邻重复。</li></ul><p>只有多维高压力与极端失败流失同时成立的 PX，以及样本不足的 PS 不参与排位；其他异常关按特征正常排位，并在主表和副本表保留风险备注供策划选关时参考。</p></div></section>
+            <section id="help-output"><span class="help-index">05</span><div><h3>阅读分析结果</h3><p>玩家行为分层回答“玩家在过程中经历了什么”，输出 L4–L0 / P、实例层差异、行为维度和稳定性。关卡报表同时展示“全实例玩家加权标签”和“主副本代表标签”，再按当前选择的口径生成候选序列。</p><ul><li>L4 代表多维稳定高负担，不自动等于坏体验。</li><li>轻松爽关需要“稳定低负担”的正证据；单纯未检出卡顿只会落入平淡过渡。</li><li>“道具未形成有效解决”不能只靠消耗高低判定；必须观察高压局面使用道具后 1/3/5 步内的背包、可见解和路径宽度是否恢复。</li></ul></div></section>
+            <section id="help-boundary"><span class="help-index">!</span><div><h3>结论边界与常见排查</h3><ul><li>工具服务仅绑定本机 127.0.0.1；模板、配置和输入源文件只读，任务产物仅写入本工具的运行数据目录，下载接口只开放当前任务生成的文件。</li><li>单个操作间隔最大 120000ms，是右删失；累计时长只能视为下界。</li><li>“可见无解 / 短窗无路”基于玩家当时可见信息和有限搜索窗，不是全局无解证明。</li><li>洗牌、移牌、复活等复杂道具后的花色或几何还原可能降级，质量报告会披露覆盖率。</li><li>默认选择 historical，使用已审计固定快照 4eac5d… / 5022d0…；只有明确研究当前配置时才改为 current。</li><li>表 2 的推荐序列用于专项测试，不应未经人工复核或 AB 实验直接上线。</li></ul></div></section>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="confirm-dialog" id="restart-dialog" aria-labelledby="restart-title">
+      <form method="dialog" class="confirm-shell" novalidate>
+        <span class="confirm-icon"><svg aria-hidden="true"><use href="#i-refresh" /></svg></span>
+        <h2 id="restart-title">重新开始当前流程？</h2>
+        <p>这只会清空浏览器中的当前任务引用和已选择文件，不会删除已经导出的文件或本机任务记录。</p>
+        <div class="confirm-actions"><button class="secondary-button" value="cancel">取消</button><button class="danger-button" id="confirm-restart" value="confirm">清空当前流程</button></div>
+      </form>
+    </dialog>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["frontend"],
+  "locale": "zh-CN",
+  "canonicalMap": "docs/UX-CONTRACT.md",
+  "requiredCapabilities": [],
+  "ownership": {
+    "Select/Listbox": "native"
+  },
+  "requiredCommands": []
+}

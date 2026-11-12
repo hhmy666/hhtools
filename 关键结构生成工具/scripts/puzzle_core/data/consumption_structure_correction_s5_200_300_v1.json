@@ -1,0 +1,509 @@
+{
+  "model_id": "consumption-structure-correction-s5-200-300-v1",
+  "scope": {
+    "level_index_min": 200,
+    "level_index_max": 300,
+    "signatures": [
+      "s5"
+    ],
+    "candidate_structure_count_min": 9,
+    "candidate_structure_count_max": 18,
+    "structure_count_min": 9,
+    "structure_count_max": 18,
+    "strategy_groups_observed": [
+      "1003",
+      "1004"
+    ],
+    "use": "ranking and bounded directional consumption correction",
+    "exclusions": [
+      "other level bands",
+      "non-s5 generation signatures",
+      "templates outside observed structure-count range",
+      "causal Seed claims"
+    ]
+  },
+  "feature_order": [
+    "log_target",
+    "dup_1",
+    "dup_2",
+    "dup_3",
+    "dup_4",
+    "dup_5",
+    "dup_6",
+    "dup_7",
+    "dup_8",
+    "dup_9",
+    "candidate_a",
+    "candidate_b",
+    "delta_a",
+    "delta_b",
+    "type_count",
+    "replaced_a_fraction",
+    "source_a_fraction",
+    "external_a_per_structure",
+    "external_b_per_structure",
+    "initial_entry_per_structure",
+    "blocker_edges_per_structure",
+    "nonzero_masks_per_structure",
+    "minimum_failure_click",
+    "log_complete_paths"
+  ],
+  "means": {
+    "log_target": 0.795375271472,
+    "dup_1": 0.1,
+    "dup_2": 0.1,
+    "dup_3": 0.1,
+    "dup_4": 0.1,
+    "dup_5": 0.1,
+    "dup_6": 0.1,
+    "dup_7": 0.1,
+    "dup_8": 0.1,
+    "dup_9": 0.1,
+    "candidate_a": 0.371363636364,
+    "candidate_b": 0.271515151515,
+    "delta_a": -0.234090909091,
+    "delta_b": -0.059090909091,
+    "type_count": 0.321022727273,
+    "replaced_a_fraction": 0.041755491768,
+    "source_a_fraction": 0.426882108226,
+    "external_a_per_structure": 2.311174242424,
+    "external_b_per_structure": 3.547222222222,
+    "initial_entry_per_structure": 0.00220959596,
+    "blocker_edges_per_structure": 0.634659090909,
+    "nonzero_masks_per_structure": 0.379797979798,
+    "minimum_failure_click": 0.832954545455,
+    "log_complete_paths": 0.935466675491
+  },
+  "scales": {
+    "log_target": 0.068790472545,
+    "dup_1": 0.3,
+    "dup_2": 0.3,
+    "dup_3": 0.3,
+    "dup_4": 0.3,
+    "dup_5": 0.3,
+    "dup_6": 0.3,
+    "dup_7": 0.3,
+    "dup_8": 0.3,
+    "dup_9": 0.3,
+    "candidate_a": 0.095653832372,
+    "candidate_b": 0.074105625359,
+    "delta_a": 0.587538463661,
+    "delta_b": 0.249834656067,
+    "type_count": 0.075940829496,
+    "replaced_a_fraction": 0.057972019752,
+    "source_a_fraction": 0.153662088147,
+    "external_a_per_structure": 1.125291611513,
+    "external_b_per_structure": 1.669474276612,
+    "initial_entry_per_structure": 0.014639796244,
+    "blocker_edges_per_structure": 0.492710609396,
+    "nonzero_masks_per_structure": 0.26255802338,
+    "minimum_failure_click": 0.149028361325,
+    "log_complete_paths": 0.279936509632
+  },
+  "coefficients": {
+    "log_target": -0.349849895569,
+    "dup_1": 0.018154169241,
+    "dup_2": 0.023061897145,
+    "dup_3": -0.014884997998,
+    "dup_4": 0.002634740136,
+    "dup_5": -0.017466908146,
+    "dup_6": -0.006376896488,
+    "dup_7": -0.011727792067,
+    "dup_8": 0.005846510378,
+    "dup_9": -0.04240793884,
+    "candidate_a": 0.180045499604,
+    "candidate_b": 0.041202835768,
+    "delta_a": 0.028488661325,
+    "delta_b": 0.037319320832,
+    "type_count": 0.073842003039,
+    "replaced_a_fraction": -0.017387436871,
+    "source_a_fraction": 0.066455510075,
+    "external_a_per_structure": 0.000409590791,
+    "external_b_per_structure": 0.107004862787,
+    "initial_entry_per_structure": 0.050328764954,
+    "blocker_edges_per_structure": 0.144057321061,
+    "nonzero_masks_per_structure": -0.078464829204,
+    "minimum_failure_click": -0.058853275231,
+    "log_complete_paths": -0.028513569947
+  },
+  "intercept": -0.063125726656,
+  "log_ratio_clip": [
+    -1.0,
+    1.0
+  ],
+  "prediction_interval_log_offsets": [
+    -0.382805327167,
+    0.391672947429
+  ],
+  "duplicate_weights": {
+    "1": 4.0,
+    "2": 4.0,
+    "3": 2.0,
+    "4": 2.0,
+    "5": 1.0,
+    "6": 1.0,
+    "7": 1.0,
+    "8": 1.0,
+    "9": 1.0,
+    "10": 1.0
+  },
+  "training": {
+    "target": "log(actual_consumption / original_template_consumption)",
+    "ridge_alpha": 30.0,
+    "regression_weights": "uniform by duplicate; business priority is applied only in ten-duplicate path ranking",
+    "grouping": "GroupKFold by source level_index; both generated candidates stay together",
+    "rows": 880,
+    "source_level_groups": 44,
+    "candidate_templates": 88,
+    "sources": {
+      "actual_sha256": "36538ac9f9316d7d158ef223198608cec52344e256268c3dd61f9b8399a5f217",
+      "target_sha256": "bc69e2d368b0ecf55cc265fb7caf0efe458b43e5eb1a8356a7b066a09d8bd0f4"
+    }
+  },
+  "validation": {
+    "group_cv": {
+      "alpha": 30.0,
+      "clip": [
+        -1.0,
+        1.0
+      ],
+      "metrics": {
+        "mae": 249.41892286055293,
+        "mape_target_denominator": 0.28354952358675195,
+        "mape_actual_denominator": 0.2950338946264399,
+        "within_25pct_of_target_denominator": 0.6016414141414141,
+        "within_50pct_of_target_denominator": 0.8592171717171717
+      },
+      "candidate_pick": {
+        "correct": 20,
+        "total": 44,
+        "rate": 0.45454545454545453
+      },
+      "features": [
+        "log_target",
+        "dup_1",
+        "dup_2",
+        "dup_3",
+        "dup_4",
+        "dup_5",
+        "dup_6",
+        "dup_7",
+        "dup_8",
+        "dup_9",
+        "candidate_a",
+        "candidate_b",
+        "delta_a",
+        "delta_b",
+        "type_count",
+        "replaced_a_fraction",
+        "source_a_fraction",
+        "external_a_per_structure",
+        "external_b_per_structure",
+        "initial_entry_per_structure",
+        "blocker_edges_per_structure",
+        "nonzero_masks_per_structure",
+        "minimum_failure_click",
+        "log_complete_paths"
+      ]
+    },
+    "leave_one_source_level_out": {
+      "metrics": {
+        "mae": 255.3455692900755,
+        "mape_target_denominator": 0.2888327610248789,
+        "mape_actual_denominator": 0.3032310452729109,
+        "within_25pct_of_target_denominator": 0.5839646464646465,
+        "within_50pct_of_target_denominator": 0.8484848484848485
+      },
+      "candidate_pick": {
+        "correct": 22,
+        "total": 44,
+        "rate": 0.5
+      }
+    },
+    "leave_one_source_level_out_segments": {
+      "dup1_2": {
+        "mae": 393.329998068822,
+        "mape_target_denominator": 0.37370980760397204,
+        "mape_actual_denominator": 0.3896381640671622,
+        "within_25pct_of_target_denominator": 0.4659090909090909,
+        "within_50pct_of_target_denominator": 0.7670454545454546
+      },
+      "dup3_4": {
+        "mae": 239.9938758691178,
+        "mape_target_denominator": 0.27976490120306896,
+        "mape_actual_denominator": 0.3164963318182483,
+        "within_25pct_of_target_denominator": 0.5625,
+        "within_50pct_of_target_denominator": 0.8636363636363636
+      },
+      "dup5_10": {
+        "mae": 81.6007931990518,
+        "mape_target_denominator": 0.18170860546729467,
+        "mape_actual_denominator": 0.17917802918368422,
+        "within_25pct_of_target_denominator": 0.7556818181818182,
+        "within_50pct_of_target_denominator": 0.946969696969697
+      }
+    },
+    "baseline_original_target_segments": {
+      "dup1_2": {
+        "mae": 544.7771590909091,
+        "mape_target_denominator": 0.4871191200602226,
+        "mape_actual_denominator": 0.6083936853442006,
+        "within_25pct_of_target_denominator": 0.2840909090909091,
+        "within_50pct_of_target_denominator": 0.6136363636363636
+      },
+      "dup3_4": {
+        "mae": 332.05312499999997,
+        "mape_target_denominator": 0.355436092407245,
+        "mape_actual_denominator": 0.5369303825351799,
+        "within_25pct_of_target_denominator": 0.4034090909090909,
+        "within_50pct_of_target_denominator": 0.7102272727272727
+      },
+      "dup5_10": {
+        "mae": 126.21229166666666,
+        "mape_target_denominator": 0.2681449787928792,
+        "mape_actual_denominator": 0.28607263183852166,
+        "within_25pct_of_target_denominator": 0.5568181818181818,
+        "within_50pct_of_target_denominator": 0.875
+      }
+    },
+    "improvement_vs_original_target_baseline": {
+      "mape_percentage_points": -9.603208,
+      "mape_relative_reduction": 0.249521579,
+      "within_25pct_percentage_points": 18.244949,
+      "mae_reduction": 102.63796
+    },
+    "repeated_shuffled_5fold_group_cv": {
+      "runs": 50,
+      "mape_target_denominator": {
+        "mean": 0.2903690665208528,
+        "sd": 0.0046698854046993395,
+        "p10": 0.2848392371656779,
+        "p90": 0.29587303683326244
+      },
+      "within_25pct": {
+        "mean": 0.5848106060606061,
+        "p10": 0.5694444444444444,
+        "p90": 0.6018939393939394
+      },
+      "candidate_pick_rate": {
+        "mean": 0.4995454545454546,
+        "p10": 0.42954545454545456,
+        "p90": 0.5477272727272727
+      }
+    },
+    "full_fit_in_sample_for_diagnostic_only": {
+      "mae": 232.5793941798708,
+      "mape_target_denominator": 0.2646437596142928,
+      "mape_actual_denominator": 0.27566073965553156,
+      "within_25pct_of_target_denominator": 0.6218434343434344,
+      "within_50pct_of_target_denominator": 0.8762626262626263
+    },
+    "baseline_original_target": {
+      "mae": 357.98352904040405,
+      "mape_target_denominator": 0.3848648446037798,
+      "mape_actual_denominator": 0.4850726002180807,
+      "within_25pct_of_target_denominator": 0.4015151515151515,
+      "within_50pct_of_target_denominator": 0.7222222222222222
+    },
+    "baseline_historical_neighbour": {
+      "mae": 408.66801060606065,
+      "mape_target_denominator": 0.5153956923524653,
+      "mape_actual_denominator": 0.6383748473326587,
+      "within_25pct_of_target_denominator": 0.32386363636363635,
+      "within_50pct_of_target_denominator": 0.6085858585858586
+    },
+    "seed_ablation": {
+      "without_seed": {
+        "alpha": 30.0,
+        "clip": [
+          -1.0,
+          1.0
+        ],
+        "metrics": {
+          "mae": 249.41892286055293,
+          "mape_target_denominator": 0.28354952358675195,
+          "mape_actual_denominator": 0.2950338946264399,
+          "within_25pct_of_target_denominator": 0.6016414141414141,
+          "within_50pct_of_target_denominator": 0.8592171717171717
+        },
+        "candidate_pick": {
+          "correct": 20,
+          "total": 44,
+          "rate": 0.45454545454545453
+        },
+        "features": [
+          "log_target",
+          "dup_1",
+          "dup_2",
+          "dup_3",
+          "dup_4",
+          "dup_5",
+          "dup_6",
+          "dup_7",
+          "dup_8",
+          "dup_9",
+          "candidate_a",
+          "candidate_b",
+          "delta_a",
+          "delta_b",
+          "type_count",
+          "replaced_a_fraction",
+          "source_a_fraction",
+          "external_a_per_structure",
+          "external_b_per_structure",
+          "initial_entry_per_structure",
+          "blocker_edges_per_structure",
+          "nonzero_masks_per_structure",
+          "minimum_failure_click",
+          "log_complete_paths"
+        ]
+      },
+      "with_seed_changed": {
+        "alpha": 30.0,
+        "clip": [
+          -1.0,
+          1.0
+        ],
+        "metrics": {
+          "mae": 249.85645051235318,
+          "mape_target_denominator": 0.28416030285649463,
+          "mape_actual_denominator": 0.295818313412142,
+          "within_25pct_of_target_denominator": 0.6066919191919192,
+          "within_50pct_of_target_denominator": 0.8566919191919192
+        },
+        "candidate_pick": {
+          "correct": 21,
+          "total": 44,
+          "rate": 0.4772727272727273
+        },
+        "features": [
+          "log_target",
+          "dup_1",
+          "dup_2",
+          "dup_3",
+          "dup_4",
+          "dup_5",
+          "dup_6",
+          "dup_7",
+          "dup_8",
+          "dup_9",
+          "candidate_a",
+          "candidate_b",
+          "delta_a",
+          "delta_b",
+          "type_count",
+          "replaced_a_fraction",
+          "source_a_fraction",
+          "external_a_per_structure",
+          "external_b_per_structure",
+          "initial_entry_per_structure",
+          "blocker_edges_per_structure",
+          "nonzero_masks_per_structure",
+          "minimum_failure_click",
+          "log_complete_paths",
+          "seed_changed"
+        ]
+      },
+      "conclusion": "direct seed_changed is retained only if grouped CV improves; numeric Seed is not treated as ordinal or causal"
+    },
+    "simulation_ablation": {
+      "static": {
+        "alpha": 30.0,
+        "clip": [
+          -1.0,
+          1.0
+        ],
+        "metrics": {
+          "mae": 249.41892286055293,
+          "mape_target_denominator": 0.28354952358675195,
+          "mape_actual_denominator": 0.2950338946264399,
+          "within_25pct_of_target_denominator": 0.6016414141414141,
+          "within_50pct_of_target_denominator": 0.8592171717171717
+        },
+        "candidate_pick": {
+          "correct": 20,
+          "total": 44,
+          "rate": 0.45454545454545453
+        },
+        "features": [
+          "log_target",
+          "dup_1",
+          "dup_2",
+          "dup_3",
+          "dup_4",
+          "dup_5",
+          "dup_6",
+          "dup_7",
+          "dup_8",
+          "dup_9",
+          "candidate_a",
+          "candidate_b",
+          "delta_a",
+          "delta_b",
+          "type_count",
+          "replaced_a_fraction",
+          "source_a_fraction",
+          "external_a_per_structure",
+          "external_b_per_structure",
+          "initial_entry_per_structure",
+          "blocker_edges_per_structure",
+          "nonzero_masks_per_structure",
+          "minimum_failure_click",
+          "log_complete_paths"
+        ]
+      },
+      "static_plus_simulation": {
+        "alpha": 30.0,
+        "clip": [
+          -1.0,
+          1.0
+        ],
+        "metrics": {
+          "mae": 239.8287785150306,
+          "mape_target_denominator": 0.2772697894992304,
+          "mape_actual_denominator": 0.2852827274756469,
+          "within_25pct_of_target_denominator": 0.601010101010101,
+          "within_50pct_of_target_denominator": 0.8592171717171717
+        },
+        "candidate_pick": {
+          "correct": 25,
+          "total": 44,
+          "rate": 0.5681818181818182
+        },
+        "features": [
+          "log_target",
+          "dup_1",
+          "dup_2",
+          "dup_3",
+          "dup_4",
+          "dup_5",
+          "dup_6",
+          "dup_7",
+          "dup_8",
+          "dup_9",
+          "candidate_a",
+          "candidate_b",
+          "delta_a",
+          "delta_b",
+          "type_count",
+          "replaced_a_fraction",
+          "source_a_fraction",
+          "external_a_per_structure",
+          "external_b_per_structure",
+          "initial_entry_per_structure",
+          "blocker_edges_per_structure",
+          "nonzero_masks_per_structure",
+          "minimum_failure_click",
+          "log_complete_paths",
+          "seed_changed",
+          "primary_distance",
+          "comp_bag_peak",
+          "comp_first_full_progress",
+          "comp_first_recycle_progress",
+          "comp_strategy_failure",
+          "comp_whole_board_reveal_pressure"
+        ]
+      }
+    }
+  }
+}

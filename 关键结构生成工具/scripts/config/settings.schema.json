@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.atcloudbox.com/puzzle-tool/settings.schema.json",
+  "title": "关键结构生成工具本机 Profile 配置",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "active_profile_id", "profiles"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "active_profile_id": {"type": ["string", "null"]},
+    "profiles": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["profile_id", "name", "tile_repo_root", "template_dir", "output_root"],
+        "properties": {
+          "profile_id": {"type": "string", "minLength": 1},
+          "name": {"type": "string", "minLength": 1},
+          "tile_repo_root": {"type": ["string", "null"]},
+          "template_dir": {"type": ["string", "null"]},
+          "output_root": {"type": "string", "minLength": 1},
+          "ulinkconfig_root": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}

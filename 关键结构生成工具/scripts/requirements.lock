@@ -1,0 +1,2 @@
+# Headless core and local Web service use only the Python 3.10+ standard library.
+# A future UI/server or packaged runtime must lock its own added dependencies.

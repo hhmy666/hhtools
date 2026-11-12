@@ -1,0 +1,269 @@
+{
+  "model_id": "consumption-structure-correction-20261027-v2",
+  "scope": {
+    "level_index_min": 201,
+    "level_index_max": 546,
+    "level_bands_observed": [
+      2,
+      4,
+      5
+    ],
+    "signatures": [
+      "s5"
+    ],
+    "structure_count_min": 9,
+    "structure_count_max": 18,
+    "strategy_groups_observed": [],
+    "lucky_values": [
+      "100"
+    ]
+  },
+  "feature_order": [
+    "log_target",
+    "dup_1",
+    "dup_2",
+    "dup_3",
+    "dup_4",
+    "dup_5",
+    "dup_6",
+    "dup_7",
+    "dup_8",
+    "dup_9",
+    "candidate_a",
+    "candidate_b",
+    "type_count",
+    "replaced_a_fraction",
+    "source_a_fraction",
+    "external_a_per_structure",
+    "external_b_per_structure",
+    "initial_entry_per_structure",
+    "blocker_edges_per_structure",
+    "nonzero_masks_per_structure",
+    "minimum_failure_click",
+    "log_complete_paths",
+    "source_tower_fraction",
+    "anchor_tower_fraction",
+    "anchor_structure_fraction",
+    "log_source_tiles",
+    "log_tile_ratio",
+    "source_max_layer",
+    "layer_delta",
+    "remaining_a_pressure",
+    "remaining_b_pressure",
+    "replacement_fraction",
+    "replaced_b_fraction"
+  ],
+  "means": {
+    "log_target": 0.8303447604971177,
+    "dup_1": 0.09958768097083719,
+    "dup_2": 0.09916800575835281,
+    "dup_3": 0.09957425777767609,
+    "dup_4": 0.09953790787199336,
+    "dup_5": 0.10028650301166414,
+    "dup_6": 0.10045147259177145,
+    "dup_7": 0.10045713679032686,
+    "dup_8": 0.10058069779666891,
+    "dup_9": 0.10015590640297616,
+    "candidate_a": 0.42111422230844836,
+    "candidate_b": 0.26220907455782044,
+    "type_count": 0.3196354396593485,
+    "replaced_a_fraction": 0.07827387345666988,
+    "source_a_fraction": 0.6960917327034236,
+    "external_a_per_structure": 3.1116396901668013,
+    "external_b_per_structure": 2.0353084668441888,
+    "initial_entry_per_structure": 0.0010721336210968194,
+    "blocker_edges_per_structure": 0.8899356326350231,
+    "nonzero_masks_per_structure": 0.5038650672912108,
+    "minimum_failure_click": 0.8294538813078032,
+    "log_complete_paths": 0.8126778987856416,
+    "source_tower_fraction": 0.14779561068095423,
+    "anchor_tower_fraction": 0.16063073433776948,
+    "anchor_structure_fraction": 0.04248063114603779,
+    "log_source_tiles": 4.690828143305202,
+    "log_tile_ratio": 0.0,
+    "source_max_layer": 0.8458119540314143,
+    "layer_delta": -0.014358850625132355,
+    "remaining_a_pressure": 0.2751982143272475,
+    "remaining_b_pressure": 0.07449591162001731,
+    "replacement_fraction": 0.10625560414176688,
+    "replaced_b_fraction": 0.027981730685096837
+  },
+  "scales": {
+    "log_target": 0.06251981985549546,
+    "dup_1": 0.29944945277907514,
+    "dup_2": 0.298887457736627,
+    "dup_3": 0.2994315029613628,
+    "dup_4": 0.2993828865657812,
+    "dup_5": 0.30038162448018585,
+    "dup_6": 0.3006010216980552,
+    "dup_7": 0.30060855020810107,
+    "dup_8": 0.30077270658655963,
+    "dup_9": 0.3002077627503566,
+    "candidate_a": 0.14265298957460457,
+    "candidate_b": 0.06585602902189003,
+    "type_count": 0.07030278799469428,
+    "replaced_a_fraction": 0.0524357656359928,
+    "source_a_fraction": 0.2634961244250098,
+    "external_a_per_structure": 1.6607861292489763,
+    "external_b_per_structure": 1.8218203228544267,
+    "initial_entry_per_structure": 0.01032951371582935,
+    "blocker_edges_per_structure": 0.4483617088366682,
+    "nonzero_masks_per_structure": 0.21861849447550633,
+    "minimum_failure_click": 0.14858619386297772,
+    "log_complete_paths": 0.26645686051942413,
+    "source_tower_fraction": 0.13895963435284076,
+    "anchor_tower_fraction": 0.15193713001249268,
+    "anchor_structure_fraction": 0.0529082281093688,
+    "log_source_tiles": 0.11032140840268592,
+    "log_tile_ratio": 1.0,
+    "source_max_layer": 0.2113009193724612,
+    "layer_delta": 0.06838023561380427,
+    "remaining_a_pressure": 0.17246979623557862,
+    "remaining_b_pressure": 0.06778305753548976,
+    "replacement_fraction": 0.026658436550960073,
+    "replaced_b_fraction": 0.048390490956349355
+  },
+  "coefficients": {
+    "log_target": -0.373800678133616,
+    "dup_1": 0.01041291655888219,
+    "dup_2": 0.011065228409914427,
+    "dup_3": -0.0072735495069158745,
+    "dup_4": 0.0061053641515074015,
+    "dup_5": -0.0010921194879015199,
+    "dup_6": 0.0032004227841400104,
+    "dup_7": 0.0025520228614948444,
+    "dup_8": 0.004707837467753638,
+    "dup_9": -0.002667047922311149,
+    "candidate_a": 0.19597526770977472,
+    "candidate_b": 0.0,
+    "type_count": 0.2227385927970883,
+    "replaced_a_fraction": 0.03754503062406481,
+    "source_a_fraction": 0.09409118381272845,
+    "external_a_per_structure": 0.042297265337075174,
+    "external_b_per_structure": 0.019557244746990148,
+    "initial_entry_per_structure": 0.02983088972323055,
+    "blocker_edges_per_structure": 0.001370274835742236,
+    "nonzero_masks_per_structure": -0.13333960017339494,
+    "minimum_failure_click": -0.03580600056436798,
+    "log_complete_paths": -0.24072776408234722,
+    "source_tower_fraction": -0.0508658980155765,
+    "anchor_tower_fraction": 0.10420104684075746,
+    "anchor_structure_fraction": -0.1735460807629789,
+    "log_source_tiles": 0.013282775556644234,
+    "log_tile_ratio": 0.0,
+    "source_max_layer": 0.09301664908548586,
+    "layer_delta": 0.011228153005225045,
+    "remaining_a_pressure": 0.031603613317823284,
+    "remaining_b_pressure": 0.15595068495380393,
+    "replacement_fraction": 0.1135053831102015,
+    "replaced_b_fraction": 0.021846740789785803
+  },
+  "intercept": 0.03580293369060561,
+  "log_ratio_clip": [
+    -1.5,
+    1.5
+  ],
+  "prediction_interval_log_offsets": [
+    -0.4314519506513815,
+    0.43466345983959903
+  ],
+  "training": {
+    "model_id": "consumption-structure-correction-20261027-v2",
+    "provenance": {
+      "csv_sha256": "30714ce537a20f23c33c84a663547990d7c76595aee295ae395cc4cbf5fe02e8",
+      "config_sha256": "d29486e794d8d7554921339451fba97f744ccc42f32a52db241fd47e0321e96f",
+      "config_commit": "034788c7110a4e2dcf9993435d84c89924fd0073",
+      "template_commit": "df3c5609fe17c1b310d903806c65d143ccaec424",
+      "strategy_dimension_available": false,
+      "identity_rule": "historical LevelId + exact DupPara + template SHA256 + generation source SHA256",
+      "pairing": "same product, position and duplicate; entrants-weighted original consumption"
+    },
+    "scope": {
+      "level_index_min": 201,
+      "level_index_max": 546,
+      "level_bands_observed": [
+        2,
+        4,
+        5
+      ],
+      "signatures": [
+        "s5"
+      ],
+      "structure_count_min": 9,
+      "structure_count_max": 18,
+      "strategy_groups_observed": [],
+      "lucky_values": [
+        "100"
+      ]
+    },
+    "rows": 3050,
+    "templates": 307,
+    "source_families": 134,
+    "validation": "nested grouped CV: 5 outer / 3 inner; entire source family held out",
+    "alpha_selected_per_fold": [
+      30,
+      30,
+      30,
+      30,
+      30
+    ],
+    "final_alpha": 30,
+    "old_fixed_model": {
+      "rows": 3050,
+      "mae": 346.12969578330177,
+      "mape": 0.2918013058243994,
+      "within_25_percent": 0.48918032786885246
+    },
+    "new_held_out_model": {
+      "rows": 3050,
+      "mae": 295.17104700572247,
+      "mape": 0.2777255620385948,
+      "within_25_percent": 0.5606557377049181
+    },
+    "unchanged_source_baseline": {
+      "rows": 3050,
+      "mae": 366.5569935613515,
+      "mape": 0.3382419346927878,
+      "within_25_percent": 0.47672131147540986
+    },
+    "by_band": {
+      "2": {
+        "rows": 1290,
+        "mae": 186.36307503451042,
+        "mape": 0.2322723682478684,
+        "within_25_percent": 0.6310077519379845
+      },
+      "4": {
+        "rows": 1168,
+        "mae": 362.46564530202875,
+        "mape": 0.3034580575426937,
+        "within_25_percent": 0.5128424657534246
+      },
+      "5": {
+        "rows": 592,
+        "mae": 399.49907577730664,
+        "mape": 0.32600101008124593,
+        "within_25_percent": 0.5016891891891891
+      }
+    },
+    "limitations": [
+      "Observational tests; strategy dimension unavailable, not causal effects",
+      "Seed selected by board simulation, not assigned a consumption coefficient",
+      "Historical parameter agreement does not prove client deployment; CSV contains no client build/time",
+      "Reference interval uses held-out residuals, not a guarantee of width <=300 or future coverage"
+    ],
+    "audit_counts": {
+      "no_key_structure": 5990,
+      "included": 3050,
+      "no_hash_verified_generation_record": 900,
+      "unsupported_lucky_value": 30,
+      "missing_or_ambiguous_same_position_anchor": 990
+    }
+  },
+  "monotone_features": [
+    "candidate_a",
+    "candidate_b",
+    "remaining_a_pressure",
+    "remaining_b_pressure"
+  ]
+}

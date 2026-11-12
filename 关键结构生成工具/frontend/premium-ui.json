@@ -1,0 +1,13 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["."],
+  "locale": "zh-CN",
+  "canonicalMap": "UX-CONTRACT.md",
+  "requiredCapabilities": ["Select/Listbox", "Form", "Scrollbar", "Toast"],
+  "ownership": {
+    "Select/Listbox": "native"
+  },
+  "evidence": {
+    "failurePaths": "tests/hard-validation-selection-contract.test.mjs"
+  }
+}

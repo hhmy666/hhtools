@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>关键结构生成工具</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <svg class="svg-defs" aria-hidden="true">
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 2 1.65 5.35L19 9l-5.35 1.65L12 16l-1.65-5.35L5 9l5.35-1.65L12 2Z"/><path d="m19 15 .75 2.25L22 18l-2.25.75L19 21l-.75-2.25L16 18l2.25-.75L19 15Z"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></symbol>
+      <symbol id="i-report" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h5M10 12h5M10 16h5"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M8 14v6"/></symbol>
+      <symbol id="i-wand" viewBox="0 0 24 24"><path d="m4 20 11-11M13 5l2-2M19 9l2-2M17 3v3M18 13v3M3 10h3"/><path d="m12 12 3 3"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2H11v17H7.5A3.5 3.5 0 0 0 4 22zM20 5.5A3.5 3.5 0 0 0 16.5 2H13v17h3.5A3.5 3.5 0 0 1 20 22z"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 13.5v-3l-2-.7-.7-1.7.9-1.9-2.1-2.1-1.9.9-1.7-.7-.7-2h-3l-.7 2-1.7.7-1.9-.9-2.1 2.1.9 1.9-.7 1.7-2 .7v3l2 .7.7 1.7-.9 1.9 2.1 2.1 1.9-.9 1.7.7.7 2h3l.7-2 1.7-.7 1.9.9 2.1-2.1-.9-1.9.7-1.7z"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 14v6h14v-6"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M14 7l5 5-5 5"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+      <symbol id="i-prev" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6M6 5v14"/></symbol>
+      <symbol id="i-next" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6M18 5v14"/></symbol>
+      <symbol id="i-compare" viewBox="0 0 24 24"><path d="M7 4v16M17 4v16M3 8l4-4 4 4M13 16l4 4 4-4"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3z"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M18 12a6 6 0 0 0-10.5-4M6 12a6 6 0 0 0 10.5 4"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol>
+    </svg>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#create" data-nav="create" aria-label="返回创建任务">
+          <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span>关键结构生成工具</span>
+        </a>
+        <div class="topbar-actions">
+          <span class="environment-pill"><span class="status-dot"></span><span id="environment-text">本地 · 源模板只读</span></span>
+          <button class="task-reset-button is-hidden" id="abandon-task" type="button" aria-label="放弃当前任务并重新创建" title="放弃当前任务并重新创建"><svg><use href="#i-refresh" /></svg><span>重新创建任务</span></button>
+          <button class="quiet-button" id="open-help" type="button"><svg><use href="#i-book" /></svg>使用说明</button>
+        </div>
+      </header>
+
+      <aside class="sidebar" aria-label="主要功能">
+        <nav class="primary-nav">
+          <button class="nav-item is-active" type="button" data-nav="create"><svg><use href="#i-plus" /></svg><span>创建任务</span></button>
+          <button class="nav-item" type="button" data-nav="tasks"><svg><use href="#i-clock" /></svg><span>任务记录</span></button>
+          <button class="nav-item" type="button" data-nav="reports"><svg><use href="#i-report" /></svg><span>验证报告</span></button>
+          <button class="nav-item" type="button" data-nav="parameters" aria-label="一键配置新参数"><svg><use href="#i-wand" /></svg><span>一键配置新参数</span></button>
+          <button class="nav-item" type="button" data-nav="consumption" aria-label="目标消耗校准"><svg><use href="#i-sliders" /></svg><span>目标消耗校准</span></button>
+        </nav>
+        <button class="nav-item sidebar-settings" type="button" data-nav="settings"><svg><use href="#i-settings" /></svg><span>设置</span></button>
+      </aside>
+
+      <main class="workspace" id="workspace">
+        <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+        <section class="view is-active" data-view="create" aria-labelledby="create-heading">
+          <h1 class="sr-only" id="create-heading">创建关键结构模板</h1>
+          <div class="flow-rail">
+            <ol class="stepper" id="stepper" aria-label="创建流程">
+              <li data-step="1" class="is-current"><button type="button"><span class="step-index">1</span><span>导入模板</span></button></li>
+              <li data-step="2"><button type="button" disabled><span class="step-index">2</span><span>配置方案</span></button></li>
+              <li data-step="3"><button type="button" disabled><span class="step-index">3</span><span>生成候选</span></button></li>
+              <li data-step="4"><button type="button" disabled><span class="step-index">4</span><span>验证导出</span></button></li>
+            </ol>
+          </div>
+
+          <div class="flow-page is-active" data-flow="1">
+            <div class="hero-copy">
+              <span class="eyebrow">NEW PUZZLE WORKSPACE</span>
+              <h2>导入关卡模板</h2>
+              <p>从只读关卡仓库查找，或上传本地模板文件。两种方式都不会改动源文件。</p>
+            </div>
+            <article class="import-card porcelain-card">
+              <div class="segmented-control import-tabs" role="tablist" aria-label="模板导入方式">
+                <button type="button" class="is-selected" role="tab" aria-selected="true" data-import-tab="template_ids">输入模板 ID</button>
+                <button type="button" role="tab" aria-selected="false" data-import-tab="files">上传模板文件</button>
+              </div>
+              <div class="import-panel is-active" data-import-panel="template_ids">
+                <label class="field-label" for="template-ids">模板 ID</label>
+                <textarea class="resize-none" id="template-ids" rows="6" placeholder="每行一个模板 ID，例如：&#10;hr0029&#10;model17&#10;model35" spellcheck="false"></textarea>
+                <div class="field-hint"><span id="template-id-count">已输入 0 项</span><span>精确查找 &lt;模板ID&gt;_m.bytes</span></div>
+              </div>
+              <div class="import-panel" data-import-panel="files">
+                <label class="drop-zone" id="template-drop-zone" for="template-files">
+                  <svg><use href="#i-upload" /></svg>
+                  <strong>拖入一个或多个 _m.bytes</strong>
+                  <span>或点击选择文件；文件只在本机处理</span>
+                </label>
+                <input class="sr-only" id="template-files" type="file" accept="_m.bytes,.bytes" multiple />
+                <div class="file-list" id="template-file-list"></div>
+              </div>
+              <button class="secondary-button full-width" id="inspect-templates" type="button" disabled>解析模板<svg><use href="#i-arrow" /></svg></button>
+              <div class="source-status" id="source-status">
+                <svg><use href="#i-lock" /></svg>
+                <span><b>源模板只读</b><small id="source-path-label">首次使用模板 ID 前，请先在设置中选择 tile 仓库</small></span>
+                <button type="button" class="text-button" data-nav="settings">配置路径</button>
+              </div>
+            </article>
+          </div>
+
+          <div class="flow-page" data-flow="2">
+            <header class="page-heading compact-heading">
+              <div><span class="eyebrow">BATCH PLAN</span><h2>配置成品方案</h2><p>先设置批次统一方案，再按需为单个模板调整。</p></div>
+              <div class="heading-actions"><button type="button" class="secondary-button" id="precision-mode-toggle" aria-pressed="false">进入精准模式</button><button type="button" class="secondary-button" id="back-to-import">返回导入</button></div>
+            </header>
+            <div class="batch-summary porcelain-card">
+              <div><span class="soft-label">批次统一方案</span><strong id="batch-summary-text">单谜题 s5 · 4 个候选 · 结构块最高层 50%</strong></div>
+              <button type="button" class="quiet-button" id="edit-batch-plan"><svg><use href="#i-sliders" /></svg>编辑统一方案</button>
+            </div>
+            <div class="config-layout">
+              <section class="template-matrix porcelain-card">
+                <div class="section-title-row"><div><h3>生成清单</h3><span id="matrix-count">0 个模板</span></div></div>
+                <div class="matrix-table-wrap">
+                  <table class="matrix-table">
+                    <thead><tr><th>模板</th><th>最终成品方案</th><th>预计成品</th><th>状态</th></tr></thead>
+                    <tbody id="template-matrix-body"></tbody>
+                  </table>
+                </div>
+                <div class="source-board-panel">
+                  <div class="board-toolbar"><div><span class="soft-label">原模板</span><strong id="source-board-title">—</strong></div></div>
+                  <div id="config-source-controls"></div>
+                  <div class="board-canvas source-board" id="source-board" aria-label="原模板棋盘预览"></div>
+                </div>
+              </section>
+
+              <aside class="config-drawer porcelain-card" aria-label="方案参数">
+                <div class="drawer-heading"><div><span class="soft-label" id="editor-scope-label">批次统一方案</span><h3 id="editor-title">默认成品方案</h3></div><button type="button" class="icon-button is-hidden" id="close-template-editor" aria-label="关闭模板单独设置"><svg><use href="#i-close" /></svg></button></div>
+                <div class="template-mode-block is-hidden" id="template-mode-block">
+                  <label class="field-label" for="template-plan-mode">当前模板如何使用方案</label>
+                  <select id="template-plan-mode">
+                    <option value="use_batch">使用统一方案</option>
+                    <option value="replace">只用本模板方案</option>
+                    <option value="append">统一方案 + 本模板新增</option>
+                    <option value="skip">本批次不生成</option>
+                  </select>
+                  <p class="field-help" id="template-mode-help">当前模板直接使用上方的批次统一方案。</p>
+                </div>
+                <div id="plan-fields">
+                  <div class="applied-suggestion-callout is-hidden" id="applied-suggestion" role="status" aria-live="polite">
+                    <div><strong>已应用当前模板建议</strong><span id="applied-suggestion-copy">—</span></div>
+                    <button class="text-button" id="undo-parameter-suggestion" type="button">撤销</button>
+                  </div>
+                  <section class="config-preflight-feedback is-hidden" id="config-preflight-feedback" role="alert" aria-live="polite">
+                    <header><div><span>参数预检</span><strong id="config-preflight-copy">当前配置需要调整</strong></div></header>
+                    <div class="config-preflight-suggestions" id="config-preflight-suggestions"></div>
+                  </section>
+                  <div class="form-row two-columns generation-basics-row">
+                    <label><span>谜题数量</span><select id="unit-count"><option value="1">1 个</option><option value="2">2 个</option></select></label>
+                    <label><span>候选数量</span><input id="candidate-count" type="number" min="1" max="20" value="6" aria-describedby="candidate-count-help" /></label>
+                  </div>
+                  <p class="field-help generation-basics-help" id="candidate-count-help">默认 6 个；建议使用 6–10 个，便于按与原模板的难度距离挑选。</p>
+                  <div class="form-row two-columns generation-gate-row">
+                    <label><span>谜题 1 步数</span><select id="unit-1-step"></select></label>
+                    <label id="required-pre-gate-recycles-wrap"><span>门槛前回收次数</span><input id="required-pre-gate-recycles" type="number" min="0" step="1" value="0" aria-controls="first-recycle-lead-wrap" aria-expanded="false" /></label>
+                  </div>
+                  <div class="form-row two-columns generation-gate-conditional-row" id="recycle-rule-row">
+                    <label id="unit-2-step-wrap" class="is-hidden"><span>谜题 2 步数</span><select id="unit-2-step"></select></label>
+                    <label class="is-hidden" id="first-recycle-lead-wrap"><span>首次回收前铺垫块数</span><input id="first-recycle-lead-tiles" type="number" min="0" step="1" value="2" disabled /></label>
+                  </div>
+                  <div class="form-row is-hidden" id="layout-wrap">
+                    <label><span>双谜题分布</span><select id="layout"><option value="x">X 左右并行</option><option value="y">Y 上下并行</option><option value="z">Z 层级串行</option></select></label>
+                  </div>
+                  <div class="form-row two-columns">
+                    <label><span>塔内生成</span><select id="tower-mode"><option value="disallow">禁止（默认）</option><option value="allow">允许</option><option value="only">仅在塔内</option></select></label>
+                    <label><span>替换来源</span><select id="replacement-sources"><option value="majority_a_on_tie" selected>A≥B 替换 A；A&lt;B 替换 B</option><option value="AB">A + B</option><option value="A">仅 A</option><option value="B">仅 B</option><option value="prefer_a_else_b">兼容旧任务：优先 A，无可用 A 则 B</option></select></label>
+                  </div>
+                  <div class="form-divider"><span>结构限制</span></div>
+                  <fieldset class="structure-count-mode-fieldset" id="structure-count-mode-fieldset">
+                    <legend>结构块数量配置</legend>
+                    <div class="structure-count-mode-options">
+                      <label><input type="radio" name="structure-group-mode" value="standard" checked /><span><b>标准配置</b><small>统一组数与数量上限</small></span></label>
+                      <label><input type="radio" name="structure-group-mode" value="custom" /><span><b>自定义每类组数</b><small>按填写顺序逐类配置</small></span></label>
+                    </div>
+                  </fieldset>
+                  <section class="structure-standard-panel" id="standard-structure-count-panel" aria-label="标准结构块数量配置">
+                    <div class="structure-type-row" id="type-count-row">
+                      <label><span>种类方式</span><select id="type-count-kind"><option value="range">范围</option><option value="exact">确定数字</option></select></label>
+                      <label><span id="type-min-label">最少</span><input id="type-count-min" type="number" min="1" max="12" value="3" /></label>
+                      <label id="type-count-max-wrap"><span>最多</span><input id="type-count-max" type="number" min="1" max="12" value="5" /></label>
+                    </div>
+                    <div class="structure-capacity-row">
+                      <label><span>每种结构块组数</span><input id="uniform-groups-per-type" type="number" min="0" max="100" step="1" value="0" aria-describedby="structure-group-zero-help" /><small id="structure-group-zero-help">设为 0 时自动分配</small></label>
+                      <label><span>自动组数最大差值</span><input id="automatic-group-max-difference" type="number" min="0" step="1" value="3" aria-describedby="automatic-group-difference-help" /><small id="automatic-group-difference-help">仅自动分配生效</small></label>
+                      <label><span>结构块数量下限</span><div class="compound-input"><select id="total-minimum-kind" aria-label="结构块数量下限方式"><option value="percent" selected>按占比</option><option value="absolute">按数量</option><option value="none">不限制</option></select><input id="total-count-minimum" type="number" min="0" max="100" step="any" value="0" aria-label="结构块数量下限数值" aria-describedby="structure-group-zero-help" /><b id="total-minimum-unit">%</b></div></label>
+                      <label><span>结构块数量上限</span><div class="compound-input"><select id="total-limit-kind" aria-label="结构块数量上限方式"><option value="percent">按占比</option><option value="absolute">按数量</option><option value="none">不限制</option></select><input id="total-limit-value" type="number" min="1" max="100" value="35" aria-label="结构块数量上限数值" /><b id="total-limit-unit">%</b></div></label>
+                    </div>
+                  </section>
+                  <section class="structure-custom-panel is-hidden" id="custom-structure-count-panel" aria-label="自定义每类结构块组数">
+                    <label for="custom-groups-per-type"><span>自定义每类组数</span><input id="custom-groups-per-type" type="text" inputmode="numeric" value="2；1；1" placeholder="例如 2；1；1" aria-describedby="custom-groups-help custom-groups-summary" /></label>
+                    <div><p id="custom-groups-help">每项代表一种结构块的组数；每组 3 格。可输入 <code>2；1；1</code> 或 <code>2；2；2；1；1</code>。</p><strong id="custom-groups-summary" role="status" aria-live="polite">3 种 · 4 组 · 12 格 / 谜题单元</strong></div>
+                  </section>
+                  <div class="preset-effective-config is-hidden" id="all-types-effective-config" role="status" aria-live="polite">
+                    <div><span>特殊预设有效配置</span><strong>12 种 × 每种 3 格</strong></div>
+                    <small>C–N 全部使用，共 36 格。原种类范围与可用类型已保留，关闭预设后恢复。</small>
+                  </div>
+                  <div class="structure-layer-limits-row">
+                    <div class="form-row structure-max-layer-row">
+                      <label><span>结构块最高层限制</span><div class="compound-input"><select id="max-layer-kind" aria-label="结构块最高层限制方式"><option value="percent">按百分比</option><option value="absolute">按层数</option><option value="none">不限制</option></select><input id="max-layer-value" type="number" min="1" max="100" value="50" aria-label="结构块最高层限制数值" /><b id="max-layer-unit">%</b></div></label>
+                    </div>
+                    <div class="form-row structure-span-row">
+                      <label><span>结构块最大层间距</span><div class="compound-input"><select id="max-structure-layer-span-kind" aria-label="结构块最大层间距方式"><option value="none">不限制</option><option value="absolute" selected>最多</option></select><input id="max-structure-layer-span" type="number" min="0" step="1" value="5" aria-label="结构块最大层间距" /><b>层</b></div></label>
+                    </div>
+                  </div>
+                  <p class="constraint-scope is-hidden" id="constraint-scope"></p>
+                  <div class="form-row same-type-span-control"><label><span>同种结构块最小间隔层</span><div class="compound-input"><input id="min-same-type-layer-span" type="number" min="0" step="1" value="2" aria-describedby="min-same-type-layer-span-help" /><b>层</b></div><small id="min-same-type-layer-span-help">同类最高层减最低层；0 不限，仍受最大层间距限制。</small></label></div>
+                  <details class="advanced-panel">
+                    <summary><span><svg><use href="#i-lock" /></svg>复现与高级设置</span><span>目标、种子与质量</span></summary>
+                    <div class="advanced-content">
+                      <fieldset class="difficulty-target-fieldset">
+                        <legend>难度目标</legend>
+                        <div class="difficulty-target-options">
+                          <label><input type="radio" name="difficulty-target" value="fidelity" checked /><span><b>难度保真</b><small>贴近原模板</small></span></label>
+                          <label><input type="radio" name="difficulty-target" value="standard" /><span><b>标准关键结构</b><small>平衡结构压力</small></span></label>
+                          <label><input type="radio" name="difficulty-target" value="strong" /><span><b>强卡点</b><small>主动增强压力</small></span></label>
+                        </div>
+                      </fieldset>
+                      <section class="advanced-subsection experience-controls" aria-labelledby="experience-controls-title">
+                        <div class="advanced-subsection-heading"><strong id="experience-controls-title">整板体验目标</strong><span>原型与风格</span></div>
+                        <div class="form-row three-columns experience-option-row">
+                          <label><span>体验原型</span><select id="experience-archetype"><option value="auto" selected>自动判断（推荐）</option><option value="intrinsic_gate">内生门槛型</option><option value="board_reveal">整板揭露型</option><option value="hybrid">混合型</option></select></label>
+                          <label><span>特殊机制预设</span><select id="special-preset" aria-describedby="special-preset-help"><option value="none" selected>不使用特殊预设</option><option value="all_types_long_range">全类型长程型</option><option value="serial_mechanism">串行机关型</option></select></label>
+                          <label><span>线上风格参考</span><select id="online-style-reference"><option value="level_200_300_v1" selected>线上 200–300 关参考</option><option value="off">关闭风格参考</option></select></label>
+                        </div>
+                        <div class="form-row two-columns is-hidden" id="long-range-wave-count-wrap">
+                          <label><span>全类型揭露波次</span><select id="long-range-wave-count" aria-describedby="special-preset-help" disabled><option value="auto" selected>自动尝试 3 / 4 波</option><option value="3">固定 3 波</option><option value="4">固定 4 波</option></select></label>
+                        </div>
+                        <p class="field-help" id="special-preset-help" aria-live="polite">当前方案会自动禁用形态不兼容的特殊预设，并在这里说明原因。</p>
+                      </section>
+                      <div class="form-row advanced-budget-row">
+                        <label><span>每个成品项搜索上限</span><input id="search-attempt-budget" type="number" min="1" max="100000" step="1" value="2000" aria-describedby="search-attempt-budget-help" /></label>
+                      </div>
+                      <p class="field-help budget-field-help" id="search-attempt-budget-help">每个成品项共用 1–100,000 次搜索；找到足够候选即结束，未满额可保留结果继续搜索。</p>
+                      <div class="seed-row"><label><span>谜题生成种子</span><input id="batch-seed" inputmode="numeric" placeholder="自动生成" /></label><button class="icon-button" id="copy-seed" type="button" aria-label="复制种子"><svg><use href="#i-copy" /></svg></button><label class="switch-label"><input id="lock-seed" type="checkbox" /><span>锁定</span></label></div>
+                      <fieldset class="type-palette" id="allowed-types-fieldset"><legend>可用结构块 C–N</legend><div id="allowed-types"></div></fieldset>
+                      <div class="form-row three-columns"><label><span>位置</span><select id="quality-position"><option value="center">居中</option><option value="balanced">均衡</option><option value="unrestricted" selected>不限制</option></select></label><label><span>对称</span><select id="quality-symmetry"><option value="strong">强</option><option value="medium">中等</option><option value="off" selected>关闭</option></select></label><label><span>分布</span><select id="quality-density"><option value="compact" selected>紧凑</option><option value="medium">中等</option><option value="dispersed">分散</option></select></label></div>
+                    </div>
+                  </details>
+                </div>
+                <div class="drawer-summary" id="drawer-summary">最终将生成单谜题 s5，每份提供 6 个候选。</div>
+              </aside>
+            </div>
+            <footer class="sticky-action-bar"><div><strong id="work-summary">0 个模板</strong><span>提交前将再次规范化并检查配置</span></div><button class="primary-button" id="generate-candidates" type="button">确认清单并生成<svg><use href="#i-arrow" /></svg></button></footer>
+          </div>
+
+          <div class="flow-page" data-flow="3">
+              <section class="generation-hero porcelain-card">
+              <header class="generation-command-header">
+                <div class="task-state-mark"><span class="spinner" id="generation-spinner"></span><span class="task-state-icon is-hidden" id="generation-state-icon"><svg><use href="#i-check" /></svg></span></div>
+                <div class="generation-command-title"><span id="generation-kicker">候选生成任务</span><h2 id="generation-title">正在准备任务</h2><p id="generation-status-text">已锁定配置与谜题种子，正在准备只读源快照…</p></div>
+                <div class="task-command-actions">
+                  <button class="secondary-button" id="generation-pause" type="button" disabled><svg><use href="#i-pause" /></svg><span>暂停</span></button>
+                  <button class="danger-button" id="generation-cancel" type="button" disabled><svg><use href="#i-stop" /></svg><span>终止任务</span></button>
+                  <button class="secondary-button is-hidden" id="generation-use-partial" type="button"><svg><use href="#i-check" /></svg><span>使用已找到的候选</span></button>
+                  <button class="secondary-button is-hidden" id="generation-adjust-and-continue" type="button"><svg><use href="#i-sliders" /></svg><span>修改参数并继续</span></button>
+                  <button class="primary-button is-hidden" id="generation-retry" type="button"><svg><use href="#i-refresh" /></svg><span>继续搜索未完成项</span></button>
+                </div>
+              </header>
+              <div class="generation-progress-block">
+                <div class="progress-copy"><strong id="generation-progress-copy">0 / 0 项</strong><span id="generation-progress-percent">0%</span></div>
+                <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="generation-progress"><span id="generation-progress-fill"></span></div>
+                <p id="generation-time-copy">正在计算本批任务规模…</p>
+                <p class="sr-only" id="generation-live" role="status" aria-live="polite"></p>
+              </div>
+              <section class="search-budget-panel is-hidden" id="generation-budget-panel" aria-label="继续搜索预算"></section>
+              <section class="search-budget-panel is-hidden" id="generation-source-actions" aria-label="未完成项原模板"></section>
+              <dl class="generation-key-facts" aria-label="任务关键状态">
+                <div><dt>当前处理</dt><dd id="generation-current-template">等待任务开始</dd></div>
+                <div><dt>已用时</dt><dd id="generation-elapsed-inline">00:00</dd></div>
+                <div><dt>本地服务</dt><dd id="generation-service-inline"><span class="status-dot"></span>运行正常</dd></div>
+              </dl>
+              <section class="phase-panel" aria-label="任务阶段">
+                  <ol class="task-phase-list" id="generation-phase-list">
+                    <li data-phase-index="0"><span>1</span><div><strong>准备源模板</strong><small>读取只读快照与配置</small></div></li>
+                    <li data-phase-index="1"><span>2</span><div><strong>搜索结构</strong><small>生成候选位置与类型</small></div></li>
+                    <li data-phase-index="2"><span>3</span><div><strong>独立硬校验</strong><small>验证遮挡、背包与谜题门槛</small></div></li>
+                    <li data-phase-index="3"><span>4</span><div><strong>整理候选</strong><small>汇总棋盘、评分与轨迹</small></div></li>
+                  </ol>
+              </section>
+              </section>
+            <dialog class="source-inspector porcelain-card" id="task-source-preview" aria-labelledby="task-source-title">
+              <div class="board-toolbar"><strong id="task-source-title" tabindex="-1">原模板</strong><button type="button" class="secondary-button" data-source-preview-close>关闭</button></div>
+              <div id="task-source-controls"></div>
+              <div class="board-canvas source-board" id="task-source-board"></div>
+            </dialog>
+            <div class="generation-state" id="generation-state">
+              <div class="generation-support-grid">
+                <section class="task-activity-panel porcelain-card">
+                  <div class="activity-heading"><h3>实时日志</h3><span>仅显示最近记录</span></div>
+                  <div class="activity-stream">
+                    <ol class="activity-timeline" id="generation-activity-log"><li class="is-empty"><time>—</time><span>任务尚未开始</span></li></ol>
+                  </div>
+                </section>
+                <section class="task-overview-panel porcelain-card">
+                  <div class="activity-heading"><h3>任务概览</h3><span class="health-chip" id="generation-health"><i></i>正常运行</span></div>
+                  <dl class="task-stat-grid"><div><dt>成功完成</dt><dd id="generation-completed-count">0</dd></div><div><dt>进行中 / 待补齐</dt><dd id="generation-pending-count">0</dd></div><div><dt>失败 / 取消</dt><dd id="generation-failure-count">0</dd></div><div><dt>已得到候选</dt><dd id="generation-candidate-count">0</dd></div></dl>
+                  <div class="current-phase-callout"><span>当前阶段</span><strong id="generation-phase-copy">等待开始</strong></div>
+                  <div class="task-failure-details is-hidden" id="generation-failure-details"></div>
+                  <p class="task-leave-note">可以离开此页面，但请保持“启动关键结构生成工具”窗口运行。当前会话中已完成的结果会保留。</p>
+                </section>
+              </div>
+            </div>
+            <div id="candidate-workspace" class="candidate-workspace is-hidden">
+              <button type="button" class="secondary-button" id="collapse-candidates">收起候选，查看实时日志</button>
+              <header class="page-heading compact-heading candidate-heading">
+                <div><span class="eyebrow">CANDIDATE REVIEW</span><h2>选择候选</h2><p id="candidate-scope-copy">候选共享同一方案，结构类型数、数量、位置与评分可以不同。</p></div>
+                <div class="heading-actions"><button class="secondary-button" id="regenerate" type="button"><svg><use href="#i-refresh" /></svg>重新生成</button><button class="secondary-button" id="open-compare" type="button" disabled><svg><use href="#i-compare" /></svg><span>对比候选</span><b id="compare-count">0/3</b></button><button class="primary-button" id="review-selections" type="button" disabled>进入验证导出</button></div>
+              </header>
+              <div class="candidate-selection-strip"><div><strong id="active-work-label" tabindex="-1">—</strong><span id="candidate-selection-copy">默认加入推荐 1；同一成品项可加入多个候选。</span></div><div class="candidate-selection-actions"><button class="text-button" id="clear-work-selection" type="button">清空本项选择</button><button class="secondary-button" id="complete-work-selection" type="button">完成本项，查看下一项</button></div></div>
+              <div class="candidate-batch-warning is-hidden" id="candidate-batch-warning" role="status"></div>
+              <details class="candidate-task-overview porcelain-card" id="candidate-task-overview">
+                <summary>
+                  <span class="overview-status"><i></i><strong id="candidate-task-health">任务已完成</strong><small id="candidate-task-last">最近进展 —</small></span>
+                  <span class="overview-metrics"><b id="candidate-task-progress">0 / 0 项</b><b id="candidate-task-candidates">0 个候选</b><b id="candidate-task-duration">用时 00:00</b></span>
+                  <span class="overview-disclosure">查看任务概览与运行记录</span>
+                </summary>
+                <div class="candidate-task-details"><ol class="activity-timeline compact" id="candidate-task-events"><li class="is-empty"><time>—</time><span>暂无运行记录</span></li></ol></div>
+              </details>
+              <div class="work-item-tabs" id="work-item-tabs" role="tablist"></div>
+              <div class="candidate-grid" id="candidate-grid" role="tabpanel" aria-label="当前成品项候选"></div>
+              <div class="candidate-pager"><button class="quiet-button" id="candidate-prev" type="button">上一组</button><span id="candidate-page-label">第 1 组</span><button class="quiet-button" id="candidate-next" type="button">下一组</button></div>
+              <nav class="candidate-work-navigation porcelain-card" aria-label="成品项切换">
+                <button class="secondary-button" id="work-prev" type="button">上一成品项</button>
+                <span id="work-navigation-label">当前成品项 1 / 1</span>
+                <button class="secondary-button" id="work-next" type="button">下一成品项</button>
+              </nav>
+            </div>
+
+            <section class="compare-workspace is-hidden" id="compare-workspace" aria-label="候选横向比较">
+              <header class="page-heading compact-heading"><div><span class="eyebrow">SIDE BY SIDE</span><h2 id="compare-title" tabindex="-1">候选横向比较</h2><p>最多 3 个候选，同步层范围与显示模式；差异只突出可决策字段。</p></div><button class="secondary-button" id="close-compare" type="button">返回候选</button></header>
+              <div class="compare-toolbar porcelain-card"><label>显示模式<select id="compare-mode"><option value="output">替换后</option><option value="source">原模板</option><option value="difference">仅差异</option></select></label><label>最高显示层<input id="compare-layer" type="range" min="1" max="12" value="12" /><span id="compare-layer-value">12</span></label><label>同步缩放<input id="compare-zoom" type="range" min="75" max="150" step="5" value="100" /><span id="compare-zoom-value">100%</span></label><span class="scope-note">所有画布使用同一视角、层范围与缩放</span></div>
+              <div class="compare-canvases" id="compare-canvases"></div>
+              <div class="compare-table-wrap porcelain-card"><table class="comparison-table"><thead id="comparison-head"></thead><tbody id="comparison-body"></tbody></table></div>
+            </section>
+
+            <section class="focus-workspace is-hidden" id="focus-workspace" aria-label="候选详情与求解轨迹">
+              <header class="page-heading compact-heading">
+                <div><span class="eyebrow">CANDIDATE DETAIL</span><h2 id="focus-title" tabindex="-1">候选详情</h2><p>棋盘、摘要与轨迹均来自同一个候选 ID。</p></div>
+                <div class="focus-heading-actions">
+                  <span class="status-chip" id="focus-selection-count" role="status" aria-live="polite">本模板已加入 0 个 · 全部模板已加入 0 个</span>
+                  <div class="focus-detail-controls">
+                    <nav class="focus-navigation-actions" aria-label="候选详情切换">
+                      <div class="focus-navigation-group" role="group" aria-label="成品项切换，仅切换已有候选的成品项">
+                        <span class="focus-navigation-label">成品项</span>
+                        <button class="icon-button focus-navigation-arrow is-previous" id="focus-work-prev" type="button" aria-label="上一成品项" title="上一成品项（仅切换已有候选项）" disabled><svg aria-hidden="true"><use href="#i-arrow" /></svg></button>
+                        <span class="focus-navigation-position" id="focus-work-position" aria-live="polite" aria-atomic="true">0 / 0</span>
+                        <button class="icon-button focus-navigation-arrow" id="focus-work-next" type="button" aria-label="下一成品项" title="下一成品项（仅切换已有候选项）" disabled><svg aria-hidden="true"><use href="#i-arrow" /></svg></button>
+                      </div>
+                      <div class="focus-navigation-group" role="group" aria-label="候选切换">
+                        <span class="focus-navigation-label">候选</span>
+                        <button class="icon-button focus-navigation-arrow is-previous" id="focus-candidate-prev" type="button" aria-label="上一个候选" title="上一个候选" disabled><svg aria-hidden="true"><use href="#i-arrow" /></svg></button>
+                        <span class="focus-navigation-position" id="focus-candidate-position" aria-live="polite" aria-atomic="true">0 / 0</span>
+                        <button class="icon-button focus-navigation-arrow" id="focus-candidate-next" type="button" aria-label="下一个候选" title="下一个候选" disabled><svg aria-hidden="true"><use href="#i-arrow" /></svg></button>
+                      </div>
+                    </nav>
+                    <button class="secondary-button focus-select-candidate" id="focus-select-candidate" type="button" aria-pressed="false" data-action="select-focused-candidate">加入本次导出</button>
+                    <button class="primary-button" id="close-focus" type="button">返回候选列表</button>
+                  </div>
+                </div>
+              </header>
+              <div class="focus-layout">
+                <article class="focus-board-card porcelain-card"><div class="board-toolbar"><div><span class="soft-label">俯视分层布局</span><strong id="focus-board-label">—</strong></div><div class="layer-visibility-control"><span>显示第 1 层至</span><button class="icon-button compact" id="focus-layer-down" type="button" aria-label="少显示一层">−</button><input id="focus-layer" type="range" min="1" max="12" value="12" aria-label="最高显示层" /><button class="icon-button compact" id="focus-layer-up" type="button" aria-label="多显示一层">+</button><strong id="focus-layer-value">12 层</strong><button class="text-button" id="focus-layer-all" type="button">全部层</button></div></div><div class="board-canvas focus-board" id="focus-board"></div></article>
+                <aside class="candidate-summary porcelain-card" id="focus-summary"></aside>
+              </div>
+              <section class="solver-player glass-panel" id="solver-player">
+                <div class="player-heading"><div><span class="soft-label">求解轨迹播放器</span><strong id="trace-title">结构单元门槛轨迹</strong></div><div class="player-selectors"><select id="trace-unit" aria-label="选择谜题单元"></select><select id="trace-route" aria-label="选择轨迹"></select></div></div>
+                <div class="player-main"><div class="player-controls"><button class="icon-button" id="trace-prev" type="button" aria-label="上一步"><svg><use href="#i-prev" /></svg></button><button class="play-button" id="trace-play" type="button" aria-label="播放"><svg><use href="#i-play" /></svg></button><button class="icon-button" id="trace-next" type="button" aria-label="下一步"><svg><use href="#i-next" /></svg></button></div><input class="timeline" id="trace-timeline" type="range" min="0" max="1" value="0" aria-label="求解轨迹当前步数" /><span class="step-readout" id="trace-step-readout">0 / 0</span><select id="trace-speed" aria-label="播放速度"><option value="2000">0.5×</option><option value="1000" selected>1×</option><option value="500">2×</option></select></div>
+                <div class="trace-detail">
+                  <section class="trace-click-card"><span>本步点击</span><strong id="trace-click-tile">等待开始</strong><small id="trace-click-layer">从第 0 步开始</small></section>
+                  <section class="bag-journey" aria-label="本步背包变化">
+                    <div class="bag-stage"><span>结算前</span><div class="bag-slots" id="bag-before-slots"></div></div><span class="bag-arrow" aria-hidden="true">→</span>
+                    <div class="bag-stage"><span>插入后</span><div class="bag-slots" id="bag-insert-slots"></div></div><span class="bag-arrow" aria-hidden="true">→</span>
+                    <div class="bag-stage is-settled"><span>结算后</span><div class="bag-slots" id="bag-slots"></div></div>
+                  </section>
+                  <section class="trace-result-card"><span>本步结果</span><strong id="trace-result">尚未点击</strong><small id="trace-gate">播放后显示消除与门槛</small></section>
+                </div>
+                <p class="trace-event sr-only" id="trace-event" role="status" aria-live="polite">从第 0 步开始，选择播放或逐步查看。</p>
+                <p class="scope-warning">结构单元轨迹；假设外部 A/B 已清除。它证明固定 C–N 的结构顺序，不等同于整关 A/B 图案仿真。</p>
+              </section>
+            </section>
+          </div>
+
+          <div class="flow-page" data-flow="4">
+            <header class="page-heading compact-heading"><div><span class="eyebrow">VERIFY &amp; EXPORT</span><h2>验证与导出</h2><p>工具给出规则、难度与证据结论；非推荐候选在明确风险后也可由用户决定导出。</p></div><button class="secondary-button" id="back-to-candidates" type="button">返回候选</button></header>
+            <div class="export-layout">
+              <section class="export-selection porcelain-card"><div class="section-title-row"><div><h3>待导出候选</h3><span id="export-selection-count">0 项</span></div><span class="status-chip success" id="export-selection-status">候选硬校验通过</span></div><div id="export-selection-list"></div><div class="scope-callout"><svg><use href="#i-lock" /></svg><div><strong>结论与决定</strong><p>验证覆盖固定 C–N、替换坐标、塔归属、相邻层单块全遮、结构内背包及十档难度。规则未通过、未达难度目标或证据不足时不默认推荐，但人工确认后仍可导出；结论与确认会写入导出记录和验证报告。文件损坏、候选身份不一致或无法安全重写仍会停止导出。</p></div></div></section>
+              <aside class="export-panel porcelain-card"><span class="soft-label">输出工作区</span><strong id="export-output-path">—</strong><ul class="check-list"><li><svg><use href="#i-check" /></svg>源模板与坐标保持只读</li><li><svg><use href="#i-check" /></svg>正式 ID 在排他锁内分配</li><li><svg><use href="#i-check" /></svg>写入后回读并保留导出记录</li></ul><button class="primary-button full-width" id="export-selected" type="button">预检并导出到本地<svg><use href="#i-arrow" /></svg></button><section class="export-success porcelain-card is-hidden" id="export-success"><span class="success-orb"><svg><use href="#i-check" /></svg></span><div class="export-success-copy"><h3>新模板与验证记录已写入输出目录</h3><div id="exported-output-list"></div></div><div class="export-success-actions"><button class="secondary-button" id="open-export-directory" type="button" data-action="open-export-directory"><svg><use href="#i-folder" /></svg>打开输出目录</button><button class="secondary-button" id="export-new-task" type="button"><svg><use href="#i-plus" /></svg>创建新任务</button><button class="primary-button" id="configure-exported-templates" type="button" data-nav="parameters">一键配置新模板参数<svg><use href="#i-arrow" /></svg></button></div></section><section class="export-progress is-hidden" id="export-progress"><p class="sr-only" id="export-live" role="status" aria-live="polite"></p><div class="export-progress-heading"><span class="spinner" id="export-spinner"></span><div><strong id="export-progress-title">正在复验并导出</strong><small id="export-progress-copy">准备重新生成所选候选…</small></div></div><div class="export-quantitative"><div><strong id="export-progress-count">0 / 0 项</strong><span id="export-progress-percent">0%</span></div><div class="export-progress-track" role="progressbar" aria-label="验证导出流程完成度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="export-progress-track"><span id="export-progress-fill"></span></div><small id="export-current-item">正在建立可复现任务</small><small id="export-last-activity">服务端最近进展 —</small></div><ol id="export-phase-list"><li data-export-phase="0"><span></span>重建候选</li><li data-export-phase="1"><span></span>独立复验</li><li data-export-phase="2"><span></span>审计工作区</li><li data-export-phase="3"><span></span>安全写入</li></ol><div class="export-event-stream"><strong>实时运行记录</strong><ol class="activity-timeline compact" id="export-activity-log"><li class="is-empty"><time>—</time><span>导出尚未开始</span></li></ol></div><div class="export-progress-meta"><span id="export-elapsed">已用时 00:00</span><span id="export-control-note">提交前可暂停或终止</span></div><div class="export-control-row"><button class="secondary-button" id="export-pause" type="button"><svg><use href="#i-pause" /></svg><span>暂停</span></button><button class="danger-button" id="export-cancel" type="button"><svg><use href="#i-stop" /></svg><span>终止</span></button><button class="secondary-button is-hidden" id="export-retry" type="button"><svg><use href="#i-refresh" /></svg><span>重试导出</span></button></div></section></aside>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" data-view="tasks" aria-labelledby="tasks-heading">
+          <header class="page-heading"><div><span class="eyebrow">LOCAL SESSION</span><h1 id="tasks-heading">任务记录</h1><p>这里只展示本地服务当前会话真实创建的任务；服务重启后不会伪造历史。</p></div><button class="secondary-button" id="refresh-tasks" type="button"><svg><use href="#i-refresh" /></svg>刷新</button></header>
+          <div class="data-card porcelain-card" id="task-list"></div>
+        </section>
+
+        <section class="view" data-view="reports" aria-labelledby="reports-heading">
+          <header class="page-heading"><div><span class="eyebrow">AUDIT TRAIL</span><h1 id="reports-heading">验证报告</h1><p>读取当前输出工作区内真实存在的 JSON、Markdown 与 CSV 记录。</p></div><button class="secondary-button" id="refresh-reports" type="button"><svg><use href="#i-refresh" /></svg>刷新</button></header>
+          <div class="data-card porcelain-card" id="report-list"></div>
+        </section>
+
+        <section class="view" data-view="parameters" aria-labelledby="parameters-heading">
+          <header class="page-heading parameter-heading"><div><span class="eyebrow">TEMPLATE PARAMETER INDEX</span><h1 id="parameters-heading">一键配置新模板参数</h1><p>在线模板联查实际关卡位置并生成推荐；未上线模板直接从 config_level 查询现有 DupPara1–10。</p></div></header>
+          <div class="parameter-mode-row">
+            <div class="segmented-control parameter-mode-switch" role="tablist" aria-label="模板参数索引类型">
+              <button type="button" id="parameter-mode-online-tab" class="is-selected" role="tab" aria-controls="parameter-mode-online-panel" aria-selected="true" data-parameter-mode="online">线上关卡模板索引</button>
+              <button type="button" id="parameter-mode-unlaunched-tab" role="tab" aria-controls="parameter-mode-unlaunched-panel" aria-selected="false" tabindex="-1" data-parameter-mode="unlaunched">未上线模板参数索引</button>
+            </div>
+          </div>
+          <div class="parameter-flow">
+            <section class="parameter-source porcelain-card">
+              <div class="section-number">01</div><div class="section-title-row"><div><h3 id="parameter-source-title">选择新模板</h3><span id="parameter-source-copy">模板 ID 从当前输出目录查找</span></div></div>
+              <div class="segmented-control" role="tablist" aria-label="新模板来源"><button type="button" class="is-selected" data-param-source="output_ids">输入模板 ID</button><button type="button" data-param-source="files">上传模板文件</button><button type="button" id="recent-export-tab" data-param-source="recent_export" disabled>沿用刚才导出的模板</button></div>
+              <div class="parameter-source-panel is-active" data-param-source-panel="output_ids"><textarea class="resize-none" id="parameter-template-ids" rows="4" placeholder="每行一个 aipuzzle 模板 ID"></textarea></div>
+              <div class="parameter-source-panel" data-param-source-panel="files"><label class="drop-zone compact-drop" for="parameter-files"><svg><use href="#i-upload" /></svg><strong>拖入已导出的 _m.bytes</strong><span>必须能与输出目录内的导出记录校验一致</span></label><input class="sr-only" id="parameter-files" type="file" accept="_m.bytes,.bytes" multiple /><div class="file-list" id="parameter-file-list"></div></div>
+              <div class="parameter-source-panel" data-param-source-panel="recent_export"><div class="inline-success"><svg><use href="#i-check" /></svg><span id="recent-export-copy">完成验证导出后可直接沿用。</span></div></div>
+              <button class="primary-button parameter-primary-action" id="resolve-parameter-templates" type="button" disabled>确认新模板</button><div class="resolved-template-list" id="resolved-parameter-templates"></div>
+            </section>
+            <div class="parameter-mode-stack">
+              <div class="parameter-mode-panel is-active" id="parameter-mode-online-panel" role="tabpanel" aria-labelledby="parameter-mode-online-tab" data-parameter-mode-panel="online">
+                <section class="parameter-settings porcelain-card">
+                  <div class="section-number">02</div><div class="section-title-row"><div><h3>选择关卡范围与参数方案</h3><span>自动使用当前目录中的线上配置表</span></div></div>
+                  <div class="path-banner"><svg><use href="#i-folder" /></svg><div><span>ulinkconfig 目录</span><strong id="ulink-path-label">首次使用时请选择</strong></div><button class="text-button" id="choose-ulink-path" type="button">选择目录</button></div>
+                  <select id="config-set-select" hidden aria-hidden="true"><option value="">请先配置目录</option></select>
+                  <div class="form-row two-columns"><label><span>关卡段起点</span><input id="level-range-start" type="number" min="1" value="200" /></label><label><span>关卡段终点</span><input id="level-range-end" type="number" min="1" value="300" /></label></div>
+                  <fieldset class="strategy-fieldset" aria-label="副本参数方案"><div class="strategy-groups" id="strategy-options"></div></fieldset>
+                  <button class="primary-button" id="calculate-parameters" type="button" disabled>计算推荐参数<svg><use href="#i-arrow" /></svg></button>
+                </section>
+              </div>
+              <div class="parameter-mode-panel" id="parameter-mode-unlaunched-panel" role="tabpanel" aria-labelledby="parameter-mode-unlaunched-tab" data-parameter-mode-panel="unlaunched" hidden>
+              <section class="parameter-settings parameter-index-settings porcelain-card">
+                <div class="section-number">02</div><div class="section-title-row"><div><h3>查询原模板参数</h3><span>自动检索目录内所有可用 config_level</span></div></div>
+                <div class="path-banner"><svg><use href="#i-folder" /></svg><div><span>ulinkconfig 目录</span><strong id="unlaunched-ulink-path-label">首次使用时请选择</strong></div><button class="text-button" id="choose-unlaunched-ulink-path" type="button">选择目录</button></div>
+                <p class="parameter-index-note">不查询 config_level_list。导出的新模板会先通过导出记录解析原模板 ID，再匹配 <code>config_level.TemplateId</code>；同一 ID 命中多条时全部保留并标记重复。</p>
+              </section>
+                <section class="parameter-results porcelain-card is-hidden" id="unlaunched-parameter-results">
+                  <div class="section-title-row"><div><span class="eyebrow">RESULT</span><h3>未上线模板现有参数</h3><span id="unlaunched-result-summary"></span></div></div>
+                  <div class="wide-table-wrap"><table class="parameter-table"><thead id="unlaunched-result-head"></thead><tbody id="unlaunched-result-body"></tbody></table></div>
+                  <div class="warning-list" id="unlaunched-parameter-warnings"></div>
+                </section>
+              </div>
+            </div>
+          </div>
+          <div class="parameter-output-stack" data-parameter-mode-output="online">
+            <section class="parameter-results porcelain-card is-hidden" id="parameter-results"><div class="section-title-row"><div><span class="eyebrow">RESULT</span><h3>新模板参数推荐</h3><span id="parameter-result-summary"></span></div><button class="secondary-button" id="download-parameter-csv" type="button">导出推荐 CSV</button></div><div class="wide-table-wrap"><table class="parameter-table"><thead id="parameter-result-head"></thead><tbody id="parameter-result-body"></tbody></table></div><div class="warning-list" id="parameter-warnings"></div></section>
+          </div>
+        </section>
+
+        <section class="view" data-view="consumption" aria-labelledby="consumption-heading">
+          <header class="page-heading"><div><h1 id="consumption-heading">目标消耗校准</h1><p>上传新模板与原关卡副本数据，为十个副本分别寻找接近目标消耗的参数和 Seed。</p></div></header>
+          <div class="consumption-workflow">
+            <section class="calibration-source porcelain-card">
+              <div class="section-title-row"><div><h3>选择新模板</h3><span>支持输入 ID、上传文件或沿用刚才导出的模板</span></div></div>
+              <div class="segmented-control" role="tablist" aria-label="校准模板来源"><button type="button" class="is-selected" data-calibration-source="output_ids">输入模板 ID</button><button type="button" data-calibration-source="files">上传模板文件</button><button type="button" id="calibration-recent-export-tab" data-calibration-source="recent_export" disabled>沿用刚才导出的模板</button></div>
+              <div class="calibration-source-panel is-active" data-calibration-source-panel="output_ids"><textarea class="resize-none" id="calibration-template-ids" rows="4" placeholder="每行一个 aipuzzle 模板 ID"></textarea></div>
+              <div class="calibration-source-panel" data-calibration-source-panel="files"><label class="drop-zone compact-drop" for="calibration-template-files"><svg><use href="#i-upload" /></svg><strong>拖入已导出的 _m.bytes</strong><span>模板须有对应导出记录</span></label><input class="sr-only" id="calibration-template-files" type="file" accept="_m.bytes,.bytes" multiple /><div class="file-list" id="calibration-template-file-list"></div></div>
+              <div class="calibration-source-panel" data-calibration-source-panel="recent_export"><div class="inline-success"><svg><use href="#i-check" /></svg><span id="calibration-recent-export-copy">完成验证导出后可直接沿用。</span></div></div>
+              <button class="primary-button full-width" id="resolve-calibration-templates" type="button" disabled>确认校准模板</button>
+              <div class="resolved-template-list" id="resolved-calibration-templates"></div>
+            </section>
+
+            <section class="consumption-calibration porcelain-card" id="consumption-calibration">
+              <div class="calibration-boundary" role="note"><strong>模拟结果仅供参考，不保证线上消耗一致</strong></div>
+              <div class="calibration-form-grid">
+                <div class="calibration-upload-grid">
+                  <div class="calibration-file-field"><span class="field-label">历史副本数据</span><label class="calibration-file-picker" for="consumption-history-file"><svg><use href="#i-upload" /></svg><span><strong>上传原关卡的 Tile关卡副本数据.csv</strong><small id="consumption-history-file-copy">包含模板、副本参数、关卡号、进入人数与人均消耗；策略组 ID 非必需</small></span></label><input class="sr-only" id="consumption-history-file" type="file" accept=".csv,text/csv" /></div>
+                  <div class="calibration-file-field calibration-config-file"><span class="field-label">config_level（可选覆盖）</span><label class="calibration-file-picker" for="consumption-config-level-file"><svg><use href="#i-upload" /></svg><span><strong>上传 config_level.csv</strong><small id="consumption-config-level-file-copy">默认读取当前 ulinkconfig；仅需覆盖本次计算时上传</small></span></label><input class="sr-only" id="consumption-config-level-file" type="file" accept=".csv,text/csv" /></div>
+                </div>
+                <div class="calibration-name-matching">
+                  <label><span>模板名前缀（可选）</span><input id="consumption-template-prefix" type="text" maxlength="128" placeholder="例如aipuzzle" aria-describedby="calibration-name-match-help calibration-name-match-status" /></label>
+                  <label><span>模板名后缀（可选）</span><input id="consumption-template-suffix" type="text" maxlength="128" placeholder="例如s5" aria-describedby="calibration-name-match-help calibration-name-match-status" /></label>
+                  <small id="calibration-name-match-help">留空自动匹配 CSV 原模板；多个匹配时需明确指定。文件扩展名与导出版本号自动识别。</small>
+                  <div class="calibration-match-status" id="calibration-name-match-status" role="status" aria-live="polite">上传 CSV 并确认模板后自动匹配，无需填写前后缀。</div>
+                </div>
+                <div class="calibration-controls">
+                  <div><label for="consumption-target-mode">消耗目标</label><select id="consumption-target-mode"><option value="source">原模板各副本实际值（默认）</option><option value="manual">手动输入各副本目标</option></select></div>
+                  <div><label for="consumption-strategy-source">结构降难策略 ID</label><select id="consumption-strategy-source"><option value="source" selected>和原关卡一致</option><option value="1003">1003</option><option value="1004">1004</option></select></div>
+                  <div><label for="consumption-strategy-policy">结构策略仿真</label><select id="consumption-strategy-policy"><option value="consider">考虑所选策略（推荐）</option><option value="ignore">忽略结构降难</option></select></div>
+                  <div><label for="consumption-seed-policy">Seed 方案</label><select id="consumption-seed-policy"><option value="joint">联合搜索 Seed 0–31（推荐）</option><option value="preserve">保留原 Seed（快速基线）</option><option value="observed">在已观测 Seed 中搜索（含原 Seed）</option></select></div>
+                </div>
+              </div>
+              <fieldset class="calibration-targets is-hidden" id="consumption-manual-targets"><legend>各副本目标消耗</legend><div class="calibration-target-grid"><label><span>Dup 1</span><input type="number" min="0" step="0.01" data-consumption-target="1" /></label><label><span>Dup 2</span><input type="number" min="0" step="0.01" data-consumption-target="2" /></label><label><span>Dup 3</span><input type="number" min="0" step="0.01" data-consumption-target="3" /></label><label><span>Dup 4</span><input type="number" min="0" step="0.01" data-consumption-target="4" /></label><label><span>Dup 5</span><input type="number" min="0" step="0.01" data-consumption-target="5" /></label><label><span>Dup 6</span><input type="number" min="0" step="0.01" data-consumption-target="6" /></label><label><span>Dup 7</span><input type="number" min="0" step="0.01" data-consumption-target="7" /></label><label><span>Dup 8</span><input type="number" min="0" step="0.01" data-consumption-target="8" /></label><label><span>Dup 9</span><input type="number" min="0" step="0.01" data-consumption-target="9" /></label><label><span>Dup 10</span><input type="number" min="0" step="0.01" data-consumption-target="10" /></label></div><small>留空副本沿用原模板实际值。</small></fieldset>
+              <label class="calibration-auto-cap"><input id="consumption-auto-first-max" type="checkbox" aria-describedby="consumption-auto-first-max-help" /><span>按结构块种类数自动扣减首副本上限<small id="consumption-auto-first-max-help">从原 A/B 参数分别扣减实际替换的种类数，再搜索该上限及以下的候选；不勾选时沿用原规则。</small></span></label>
+              <div class="calibration-action-row"><p id="consumption-seed-note">和原关卡使用同一策略；联合搜索每档 A/B 与 Seed 0–31，Lucky 保留。</p><button class="primary-button" id="run-consumption-calibration" type="button" disabled>生成审阅草案<svg><use href="#i-arrow" /></svg></button></div>
+              <div class="calibration-job-progress is-hidden" id="consumption-calibration-progress" role="status" aria-live="polite"><div class="calibration-job-summary"><strong id="calibration-progress-message"></strong><span id="calibration-progress-count"></span></div><progress id="calibration-progress-bar" max="100" aria-label="校准副本处理进度"></progress><p id="calibration-progress-detail"></p></div>
+              <section class="calibration-result is-hidden" id="consumption-calibration-result">
+                <div class="calibration-result-head"><div><h4>校准审阅表</h4><div class="calibration-summary" id="consumption-calibration-summary" role="status" aria-live="polite"></div></div><div class="calibration-export-actions"><button class="secondary-button" id="download-calibration-review" type="button">导出审阅 CSV</button><button class="secondary-button" id="download-calibration-draft" type="button">导出 DupPara 草案</button><button class="primary-button" id="write-calibration-config" type="button">一键写入配置</button></div></div>
+                <p class="calibration-review-notice is-hidden" id="calibration-review-notice" role="status"></p>
+                <div class="calibration-template-results" id="consumption-calibration-templates"></div><div class="warning-list" id="consumption-calibration-warnings"></div><p class="calibration-readonly-note">写入前可先导出草案审阅；一键写入会由服务端备份并原子更新当前 config_level。</p>
+              </section>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-view="settings" aria-labelledby="settings-heading">
+          <header class="page-heading"><div><span class="eyebrow">LOCAL PROFILE</span><h1 id="settings-heading">设置</h1><p>每台电脑首次配置一次，后续自动沿用；所有路径可随时调整。</p></div></header>
+          <div class="settings-grid">
+            <article class="setting-card porcelain-card"><div class="setting-icon"><svg><use href="#i-lock" /></svg></div><div><h2>模板仓库目录</h2><p>用于按模板 ID 查找源模板，只读不修改。</p>
+              <fieldset class="source-directory-method"><legend>目录设置方式</legend><div class="source-directory-options">
+                <label><input type="radio" name="source-directory-mode" value="picker" checked /><span>选择模板目录</span></label>
+                <label><input type="radio" name="source-directory-mode" value="manual" /><span>手动输入路径</span></label>
+              </div></fieldset>
+              <label for="setting-template-path">模板目录</label>
+              <div class="path-input source-directory-input"><input id="setting-template-path" placeholder="请选择存放 _m.bytes 文件的目录" readonly aria-describedby="source-directory-help source-setting-error" /><button type="button" id="choose-template-directory">选择目录</button></div>
+              <p id="source-directory-help" class="source-directory-help">请选择存放 _m.bytes 的文件夹，例如项目的 TileMatchLevelData 目录。</p>
+              <div id="source-setting-error" class="source-setting-error" role="alert" hidden></div>
+              <button class="secondary-button" id="save-source-setting" type="button">保存模板目录</button>
+            </div></article>
+            <article class="setting-card porcelain-card"><div class="setting-icon"><svg><use href="#i-folder" /></svg></div><div><h2>输出工作区</h2><p>正式模板位于根目录；验证记录按日期进入子目录。</p><label><span>输出目录</span><div class="path-input"><input id="setting-output-path" /><button type="button" data-choose-path="output">选择</button></div></label><button class="secondary-button" id="save-output-setting" type="button">保存输出路径</button></div></article>
+            <article class="setting-card porcelain-card"><div class="setting-icon"><svg><use href="#i-report" /></svg></div><div><h2>ulinkconfig 配置目录</h2><p>常规索引只读；仅在“目标消耗校准”确认后备份并写入 config_level。</p><label><span>ulinkconfig 根目录</span><div class="path-input"><input id="setting-ulink-path" placeholder="/Users/你的用户名/Projects/ulinkconfig" /><button type="button" data-choose-path="ulinkconfig">选择</button></div></label><button class="secondary-button" id="save-ulink-setting" type="button">保存配置目录</button></div></article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog class="confirm-dialog" id="confirm-dialog">
+      <form method="dialog" class="confirm-shell" novalidate>
+        <h2 id="confirm-title">终止当前任务？</h2>
+        <p id="confirm-copy">已完成结果会保留，当前正在计算的部分会在下一个安全检查点停止。</p>
+        <div class="confirm-actions"><button class="secondary-button" id="confirm-safe" value="cancel">继续运行</button><button class="danger-button" id="confirm-action" value="confirm">确认终止</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="template-adjustment-dialog" id="template-adjustment-dialog" aria-labelledby="template-adjustment-title" aria-describedby="template-adjustment-copy">
+      <section class="template-adjustment-shell">
+        <header class="template-adjustment-heading">
+          <div><span class="soft-label">仅修改当前成品项</span><h2 id="template-adjustment-title">调整模板参数</h2><p id="template-adjustment-copy">保存为候选页内的独立草案；当前任务、已有候选与人工选择都不会清空。</p></div>
+          <button class="icon-button" id="close-template-adjustment" type="button" aria-label="关闭参数调整"><svg><use href="#i-close" /></svg></button>
+        </header>
+        <div class="template-adjustment-context" id="template-adjustment-context" role="status">—</div>
+        <div class="template-adjustment-body">
+          <section class="continuation-adjustment-scope is-hidden" id="continuation-adjustment-scope" aria-label="继续生成参数范围">
+            <fieldset class="continuation-mode-options"><legend class="sr-only">修改方式</legend><span class="continuation-mode-label" aria-hidden="true">修改方式</span><label><input type="radio" name="continuation-adjustment-mode" value="uniform" checked /><span>统一修改</span></label><label><input type="radio" name="continuation-adjustment-mode" value="individual" /><span>逐项修改</span></label></fieldset>
+            <div class="continuation-template-list" id="continuation-template-list" aria-label="选择需要修改的模板"></div>
+            <label class="continuation-target-select is-hidden" id="continuation-target-wrap"><span>当前编辑</span><select id="continuation-adjustment-target"></select></label>
+          </section>
+          <div id="template-adjustment-form-slot"></div>
+        </div>
+        <footer class="template-adjustment-actions">
+          <p class="template-adjustment-error is-hidden" id="template-adjustment-error" role="alert"></p>
+          <div><button class="secondary-button" id="cancel-template-adjustment" type="button">取消</button><button class="primary-button" id="save-template-adjustment" type="button">保存此模板参数</button></div>
+        </footer>
+      </section>
+    </dialog>
+
+    <dialog class="candidate-parameter-dialog" id="candidate-parameter-dialog" aria-labelledby="candidate-parameter-title">
+      <section class="candidate-parameter-shell">
+        <header><div><span class="soft-label">候选参数快照</span><h2 id="candidate-parameter-title">参数详情</h2></div><button class="icon-button" id="close-candidate-parameter" type="button" aria-label="关闭参数详情"><svg><use href="#i-close" /></svg></button></header>
+        <div class="candidate-parameter-body" id="candidate-parameter-body"></div>
+      </section>
+    </dialog>
+
+    <dialog class="help-dialog" id="help-dialog" aria-labelledby="help-title" aria-describedby="help-subtitle">
+      <div class="help-shell">
+        <header class="help-header">
+          <div class="help-heading">
+            <h2 id="help-title">使用说明</h2>
+            <p id="help-subtitle">按任务过程查看操作、选择依据与验收标准。打开使用说明时会自动定位到当前功能。</p>
+            <div class="help-heading-meta"><span>你正在查看：<strong id="help-current-topic">首次使用</strong></span><button class="help-start-link" id="help-start-link" type="button">第一次使用？从这里开始</button></div>
+          </div>
+          <div class="help-header-actions">
+            <label class="help-search" for="help-search-input"><span class="sr-only">搜索使用说明</span><svg aria-hidden="true"><use href="#i-search" /></svg><input id="help-search-input" type="search" autocomplete="off" placeholder="搜索使用说明" /></label>
+            <button class="icon-button" id="close-help" type="button" aria-label="关闭使用说明"><svg><use href="#i-close" /></svg></button>
+          </div>
+        </header>
+        <div class="help-body">
+          <nav class="help-nav" aria-label="使用说明目录">
+            <div class="help-nav-group" data-help-nav-group><strong>先选任务</strong><a href="#help-start">我该从哪里开始</a><a href="#help-setup">准备输入与目录</a></div>
+            <div class="help-nav-group" data-help-nav-group><strong>完成一次生成</strong><a href="#help-import">1. 建立模板清单</a><a href="#help-plan">2. 设计难度与结构</a><a href="#help-generation">3. 运行与续搜</a><a href="#help-candidates">4. 决定候选</a><a href="#help-board">5. 复核棋盘证据</a><a href="#help-export">6. 验证并交付</a></div>
+            <div class="help-nav-group" data-help-nav-group><strong>继续与校准</strong><a href="#help-tasks">继续本地任务</a><a href="#help-reports">查阅验证报告</a><a href="#help-parameters">快速复用副本参数</a><a href="#help-calibration">按消耗拟合参数</a><a href="#help-settings">管理本机路径</a></div>
+            <div class="help-nav-group" data-help-nav-group><strong>规则与证据</strong><a href="#help-glossary">阈值、术语与来源</a><a href="#help-faq">排查常见问题</a></div>
+          </nav>
+          <main class="help-content" id="help-content" tabindex="-1">
+            <div class="help-search-summary" id="help-search-summary" role="status" aria-live="polite" hidden></div>
+            <section class="help-search-results" id="help-search-results" aria-label="使用说明搜索结果" hidden></section>
+
+            <section class="help-topic help-start" id="help-start" data-help-topic data-help-aliases="开始 新手 入口">
+              <div class="help-topic-heading"><span class="help-kicker">先选任务</span><h3>我该从哪里开始</h3><p>先确认本次要交付什么，再进入对应入口；不需要从头走完所有功能。</p></div>
+              <div class="help-section" data-help-section="按交付物选择入口">
+                <h4>按交付物选择入口</h4>
+                <div class="help-decision-list" aria-label="功能选择">
+                  <div><strong>带关键结构的新模板</strong><span>进入“创建任务”，依次建立清单、设计方案、生成候选、验证导出。</span></div>
+                  <div><strong>快速得到 DupPara1–10</strong><span>进入“一键配置新参数”，保留原梯度或按固定节奏重建；不拟合线上消耗。</span></div>
+                  <div><strong>尽量复刻原关卡人均消耗</strong><span>进入“目标消耗校准”，联合搜索每档 A/B 与 Seed，并始终给出十档最接近结果。</span></div>
+                  <div><strong>继续或复查既有工作</strong><span>运行中任务去“任务记录”；已写入磁盘的证据去“验证报告”。</span></div>
+                </div>
+              </div>
+              <div class="help-section" data-help-section="生成模板最短路径">
+                <div class="help-callout is-success"><strong>生成模板的完成标准</strong><ol class="help-steps"><li>模板全部解析，失败项已处理或移出清单。</li><li>每个成品项的难度目标、体验原型与替换来源已确认。</li><li>候选已按棋盘、轨迹和风险提示复核。</li><li>正式导出回读成功，导出记录与验证报告已落盘。</li></ol></div>
+              </div>
+            </section>
+
+            <section class="help-topic" id="help-setup" data-help-topic data-help-aliases="路径 文件 目录">
+              <div class="help-topic-heading"><span class="help-kicker">先选任务</span><h3>准备输入与目录</h3><p>只配置本次任务会用到的路径。路径选择影响“从哪里读”和“向哪里写”，不改变模板难度。</p></div>
+              <div class="help-section" data-help-section="开始前需要什么">
+                <h4>开始前需要什么</h4>
+                <div class="help-table-wrap"><table class="help-table"><thead><tr><th>输入</th><th>什么时候需要</th><th>安全边界</th><th>完成检查</th></tr></thead><tbody><tr><td>Tile 源模板目录</td><td>通过模板 ID 建立清单</td><td>只读，不改写原模板</td><td>模板 ID 能被解析</td></tr><tr><td>输出工作区</td><td>正式导出模板和报告</td><td>不能位于源模板目录内；不覆盖旧文件</td><td>页面能显示目标目录</td></tr><tr><td>ulinkconfig 目录</td><td>副本参数索引或消耗校准</td><td>索引只读；只有确认“一键写入”才更新 config_level.csv</td><td>能读取当前配置集</td></tr><tr><td>历史副本 CSV</td><td>按消耗拟合参数</td><td>仅用于本次计算</td><td>能识别模板、Dup、人数和人均消耗</td></tr></tbody></table></div>
+              </div>
+            </section>
+
+            <section class="help-topic" id="help-import" data-help-topic data-help-aliases="上传 解析 模板ID bytes">
+              <div class="help-topic-heading"><span class="help-kicker">完成一次生成 · 1</span><h3>建立模板清单</h3><p>目标是得到一份可解析、可逐项配置的源模板清单。</p></div>
+              <div class="help-section" data-help-section="导入步骤">
+                <h4>怎么操作</h4><ol class="help-steps"><li>已有本地仓库时粘贴一列模板 ID；只有文件时选择或拖入多个 _m.bytes。</li><li>点击“解析模板”，等待每个条目返回结果。</li><li>核对 Tile 总数、非塔层数与失败原因；移除错误项或修正来源后再继续。</li></ol>
+                <div class="help-callout"><strong>两种方式都不改写源文件</strong><p>模板 ID 依赖 Tile 源目录；直接上传不依赖该目录。单项失败不会清空其他成功模板。</p></div>
+              </div>
+              <div class="help-chapter-terms"><strong>本节名词</strong><span>_m.bytes：关卡模板文件；模板 ID：不带文件后缀的模板标识。</span></div>
+            </section>
+
+            <section class="help-topic" id="help-plan" data-help-topic data-help-aliases="难度 体验原型 替换来源 结构范围 Seed 随机种子">
+              <div class="help-topic-heading"><span class="help-kicker">完成一次生成 · 2</span><h3>设计难度与关键结构</h3><p>这一步决定生成几份成品、替换哪类 Tile，以及候选应保留怎样的难度和揭露体验。</p></div>
+              <div class="help-section help-priority-panel is-must" data-help-section="必须理解：难度目标与体验原型" data-help-level="must" data-help-target="help-plan-difficulty">
+                <div class="help-section-label">必须理解</div><h4>先选难度目标，再选体验原型</h4>
+                <div class="help-grid two-columns"><div><strong>难度目标</strong><ul><li><strong>难度保真：</strong>优先贴近原模板，尽量避免 7 格背包失败路径。</li><li><strong>标准关键结构：</strong>允许少量高压路径，但必须经过策略模拟。</li><li><strong>强卡点：</strong>只在明确需要高压场景时主动选择。</li></ul></div><div><strong>体验原型</strong><ul><li><strong>内生门槛型：</strong>C–N 自身解锁承担主要难度。</li><li><strong>整板揭露型：</strong>A/B 分批露出 C–N，结构三消后释放下层。</li><li><strong>混合型：</strong>同时存在结构内门槛与整板揭露。</li></ul></div></div>
+                <p>不确定时保留“自动判断”。置信不足会显示证据缺口，不会把诊断第一名伪装成确定结论。</p>
+              </div>
+              <div class="help-section" data-help-section="配置顺序与完成检查">
+                <h4>建议按这个顺序配置</h4><p>新建方案默认 6 个候选、最大层间距最多 5 层、每个成品项搜索上限默认 2,000 次；质量偏好默认为位置不限制、对称关闭、分布紧凑。它们是可修改的起点，不是硬规则。</p><ol class="help-steps"><li>确定成品关系：s5 + s6 是两份成品；s5s6 是同一模板内双谜题。</li><li>确认替换来源：按原模板 A/B Tile 实际总数判断，A≥B 时默认替换 A，否则替换 B；也可人工改为 A+B、仅 A、仅 B。</li><li>选择难度目标与体验原型，再设置结构类型、层范围、数量和塔模式。</li><li>最后设置候选数、搜索预算与 Seed；批次中的例外模板再单独调整。</li></ol>
+                <div class="help-callout is-success"><strong>可以进入生成的标准</strong><p>每个成品项都有明确的结构步数、替换来源、难度目标和塔范围；默认替换来源不足时应修正配置，而不是期待工具偷偷换类。</p></div>
+                <div class="help-callout"><strong>需要更严格筛选时进入精准模式</strong><p>入口位于“返回导入”左侧。进入后默认使用 3 个候选、每个成品项搜索上限 20,000 次、最大层间距 5 层、位置不限制、对称关闭、分布紧凑，其余配置保持不变；退出时恢复进入前的统一方案和单模板方案。精准生成只返回同时满足全部参数硬规则、难度目标、副本梯度安全，并且机制压力为低或中的候选；预算耗尽时结果可以少于 3 个，不会用未达标候选回填。</p></div>
+              </div>
+              <details class="help-details" data-help-section="按需查看：结构范围、Seed 与特殊预设" data-help-level="optional"><summary><span class="help-disclosure-kind">按需查看</span>结构范围、Seed 与特殊预设</summary><div><ul><li>结构种类只提供“范围”和“确定数字”，并用 C–N 白名单限制类型。</li><li>标准配置把“每种结构块组数”应用到每一类，默认每种 0（随机分配）、每组固定 3 格；例如确定 3 种且每种 2 组，共生成 18 格。填写 0 时不固定每种组数，每类至少 1 组，并在结构块数量上下限内按候选种子随机分配。</li><li>自定义每类组数会由填写项数确定种类数：2；1；1 为 3 种、12 格，2；2；2；1；1 为 5 种、24 格。标准配置与自定义配置二选一。</li><li>双谜题的 C–N 类型互斥；组数按每个谜题单元分别应用。层间距 = 最高结构层 − 最低结构层。</li><li>位置与分布会影响候选生成，对称偏好参与质量排序；这些偏好都不是难度证明。</li><li>谜题 Seed（随机种子）可自动生成、复制或锁定；未锁定 Seed 只服务当次生成。</li><li>全类型长程型限单谜题且非“仅塔内”，强制 C–N 12 类×3；串行机关型限 Z 向 high→low 双谜题且非“仅塔内”。</li></ul></div></details>
+              <details class="help-details" data-help-section="按需查看：配置页说明与层限制" data-help-level="optional"><summary><span class="help-disclosure-kind">按需查看</span>配置页说明与层限制</summary><div><ul><li>应用方式显示在生成清单的方案说明中；配置阶段只展示原阵型与规划分区，生成后的替换布局在候选页查看。</li><li>门槛前回收次数为 0 时，推荐解不安排门槛前回收，首次三消在到达 sN 门槛时发生。设置回收次数时，每个谜题单元在门槛前恰好回收指定次数，首次回收还受铺垫块数约束。</li><li>标准配置每种 1 组、种类范围 3–5 时，每个谜题单元生成 3–5 种、9–15 格。</li><li>结构块最大层间距是硬限制：最高层减最低层不超过配置值。例如第 1–6 层的层间距为 5。</li><li>禁止塔内生成时，最高层百分比按非塔区域最高层计算，数量占比按非塔 Tile 总数计算且不超过 50%；数量上限按 3 的倍数取整。配置页只显示当前有效最高层。</li></ul></div></details>
+              <div class="help-chapter-terms"><strong>本节名词</strong><span>sN 是结构达到门槛的步数口径；体验原型描述难度来自哪里，不等于玩家胜率。</span></div>
+            </section>
+
+            <section class="help-topic" id="help-generation" data-help-topic data-help-aliases="搜索 预算 暂停 继续 终止 恢复">
+              <div class="help-topic-heading"><span class="help-kicker">完成一次生成 · 3</span><h3>运行生成与继续搜索</h3><p>目标是区分“配置不可能”和“当前预算还没找到”，并在不丢失已有结果的前提下继续。</p></div>
+              <div class="help-section" data-help-section="状态判断与下一步">
+                <h4>先看状态，再决定下一步</h4><div class="help-state-list"><div><strong>参数已证冲突</strong><span>当前组合无法同时满足；按具体原因修改配置。</span></div><div><strong>当前预算未找到</strong><span>不等于无解；保留已有候选，增加预算继续未完成项。</span></div><div><strong>暂停或终止中</strong><span>计算会在下一个安全检查点停下，不会强制截断写入。</span></div></div>
+                <ul><li>每个成品项搜索上限默认 2,000，可设 1–100,000；预算越大通常用时越长，不保证找到候选。</li><li>“调整此模板参数”只改变当前模板草案，不清空其他候选和人工选择。</li><li>可以离开页面，但必须保持启动窗口和本地服务运行；服务重启后未完成任务与未导出候选不能恢复。</li></ul>
+                <p>终止后可在当前页面“修改参数并继续”。统一修改时勾选要处理的模板；逐项修改时从“当前编辑”下拉框选择模板，选项标明已有候选数量，只修改并续跑当前模板。已有候选与人工选择会保留。</p>
+              </div>
+            </section>
+
+            <section class="help-topic" id="help-candidates" data-help-topic data-help-aliases="推荐 对比 风险 机制压力">
+              <div class="help-topic-heading"><span class="help-kicker">完成一次生成 · 4</span><h3>决定使用哪些候选</h3><p>推荐只负责缩小选择范围；人工决定前应核对难度来源、棋盘差异和证据缺口。</p></div>
+              <div class="help-section" data-help-section="候选复核步骤"><h4>怎么判断</h4><ol class="help-steps"><li>先看体验原型、与原模板难度距离和机制压力。</li><li>打开“查看与播放”复核棋盘与轨迹；差异不直观时加入最多 3 个候选横向比较。</li><li>将可接受候选加入导出；同一成品项可以保留多个版本。</li><li>完成本项后切换下一成品项，直至清单全部处理。</li></ol><div class="help-callout is-warning"><strong>不推荐不等于禁止</strong><p>证据不足、高机制压力或未达目标的候选不会默认加入；查看原因并人工确认后仍可选择和导出。</p></div></div>
+              <details class="help-details" data-help-section="按需查看：非统一参数、参数快照与 info 详情" data-help-level="optional"><summary><span class="help-disclosure-kind">按需查看</span>非统一参数与参数快照</summary><div><p>该候选按生成当时锁定的参数保留，后续修改不会覆盖此快照。同一成品项可包含不同续跑批次的候选；参数详情显示生成时保存的配置，种类范围、随机组数保持原设定，不把随机结果当作参数改动。</p><p>实际不同的参数置顶，用强调色和“不同”标记指出差异，当前值下标明统一方案或其他候选的对照值。相同参数续跑不会显示“非统一参数”。</p></div></details>
+              <details class="help-details" data-help-section="技术口径：推荐排序" data-help-level="technical"><summary><span class="help-disclosure-kind">技术口径</span>推荐排序与证据边界</summary><div><p>顺序为：硬校验 → 原型匹配 → 机制压力底线 → 与原模板难度距离 → 线上风格距离 → 布局打平。</p><p>模拟策略、7 格失败路径、首次回收、首次满包和揭露曲线是模拟参考，不是玩家胜率；缺项显示“未评估”。</p></div></details>
+            </section>
+
+            <section class="help-topic" id="help-board" data-help-topic data-help-aliases="层数 轨迹 播放 棋盘 A/B透明">
+              <div class="help-topic-heading"><span class="help-kicker">完成一次生成 · 5</span><h3>复核棋盘与求解证据</h3><p>目标是确认结构落点、遮挡关系和完成路径与预期一致，而不是只看缩略图。</p></div>
+              <div class="help-section" data-help-section="棋盘与轨迹怎么看"><h4>怎么看</h4><ul><li><strong>显示至第 N 层：</strong>显示第 1–N 层，隐藏更高层。</li><li><strong>A/B 透明：</strong>详情棋盘中 A/B 使用 80% 透明度，便于查看被遮挡的 C–N。</li><li><strong>连续复核：</strong>使用“上一个候选”“下一个候选”按候选列表顺序切换；首尾不会循环。“返回候选列表”会回到打开详情时的列表页，并保留已选与对比状态。</li><li><strong>门槛轨迹：</strong>复现结构 sN；容量安全轨迹展示 7/8 格背包下的点击与三消结算。</li><li><strong>完成标准：</strong>结构位置、揭露先后和释放下层符合目标；已理解模拟轨迹的适用范围。</li></ul></div>
+              <details class="help-details" data-help-section="技术口径：轨迹证明范围" data-help-level="technical"><summary><span class="help-disclosure-kind">技术口径</span>轨迹证明范围</summary><div><p>结构门槛轨迹假设外部 A/B 已清除；仅塔内位置会实时变化，因此工具不伪造静态轨迹。整板体验应结合揭露曲线与策略仿真查看。</p></div></details>
+            </section>
+
+            <section class="help-topic" id="help-export" data-help-topic data-help-aliases="导出 写入导出记录验证">
+              <div class="help-topic-heading"><span class="help-kicker">完成一次生成 · 6</span><h3>验证并交付到本地</h3><p>正式导出会按锁定配置重建候选、独立复验并回读文件；完成标志是模板与证据都已落盘。</p></div>
+              <div class="help-section" data-help-section="导出边界与步骤"><h4>提交前与提交后检查</h4><ol class="help-steps"><li>确认所有成品项已有人工选择，并阅读不推荐或证据不足提示。</li><li>点击预检导出，观察重建、独立复验、审计和安全写入四个阶段。</li><li>导出完成后核对模板、导出记录、验证报告和审计记录。</li></ol><div class="help-grid two-columns"><div><h4>提示后仍可继续</h4><ul><li>数据不足或模拟估算。</li><li>候选不推荐或机制压力高。</li><li>用户已查看并确认。</li></ul></div><div><h4>为保护文件而停止</h4><ul><li>候选身份与锁定配置不一致。</li><li>源文件损坏或不可读。</li><li>重写或回读失败。</li></ul></div></div><p>多候选按选择顺序使用基础名、v2、v3……且不覆盖旧文件。进入安全写入后不能暂停或终止。</p></div>
+            </section>
+
+            <section class="help-topic" id="help-tasks" data-help-topic data-help-aliases="暂停 恢复 重试 继续">
+              <div class="help-topic-heading"><span class="help-kicker">继续与校准</span><h3>继续当前本地任务</h3><p>适用于启动窗口仍在运行时查看、暂停、继续、终止、续搜或重试。</p></div>
+              <div class="help-section" data-help-section="任务记录范围"><h4>结果怎么看</h4><ul><li>按真实状态显示可用操作，不提供无法完成的假按钮。</li><li>服务端重启后，运行中任务与未导出候选不会恢复。</li><li>已正式写入并回读成功的模板和报告是持久文件，可在验证报告中复查。</li></ul></div>
+            </section>
+
+            <section class="help-topic" id="help-reports" data-help-topic data-help-aliases="报告 审计 证据 JSON Markdown CSV">
+              <div class="help-topic-heading"><span class="help-kicker">继续与校准</span><h3>查阅已落盘的验证证据</h3><p>适用于按文件名、类型、大小与更新时间定位某次正式导出的结论。</p></div>
+              <div class="help-section" data-help-section="报告阅读与空状态"><h4>完成检查</h4><ul><li>JSON、Markdown 与 CSV 报告只来自当前输出工作区真实文件。</li><li>非推荐结论、证据缺口与人工确认会原样保留，不会改写成“已全部验证”。</li><li>列表为空时先去“设置”核对输出工作区，而不是重新生成。</li></ul></div>
+            </section>
+
+            <section class="help-topic" id="help-parameters" data-help-topic data-help-aliases="DupPara 副本参数 梯度 Seed RandomSeed Luck TowerLucky">
+              <div class="help-topic-heading"><span class="help-kicker">继续与校准</span><h3>快速复用或重建 DupPara1–10</h3><p>用于按确定规则生成十档副本参数；这是参数梯度方案，不是消耗复刻。</p></div>
+              <div class="help-section" data-help-section="使用场景与步骤"><h4>什么时候使用</h4><p>想保留原配置走势或用固定节奏重建时使用；要拟合原关卡人均消耗时，应改用“目标消耗校准”。</p><ol class="help-steps"><li>输入新模板 ID、上传已导出模板，或沿用刚才导出的模板。</li><li>线上模板索引需选择关卡范围；未上线索引通过导出记录追溯原模板。</li><li>先使用默认“保真副本参数”；只有明确要重做走势时才选择五种重建方案。</li><li>核对新旧 DupPara1–10，再导出推荐 CSV。</li></ol></div>
+              <div class="help-section help-priority-panel is-must" data-help-section="必须理解：六种参数方案" data-help-level="must" data-help-target="help-parameters-gradient">
+                <div class="help-section-label">必须理解</div><h4>保真方案与五种重建梯度</h4>
+                <div class="help-table-wrap"><table class="help-table help-parameter-rules"><thead><tr><th>方案</th><th>保留什么</th><th>改变什么</th><th>首次降低</th><th>之后间隔</th><th>默认底线</th><th>主要风险</th></tr></thead><tbody>
+                  <tr><td>保真副本参数（默认）</td><td>每档自己的 Seed、Luck 与原梯度</td><td>Dup1–10 分别按该档原值扣实际替换的 A/B 类型</td><td>每档独立计算</td><td>不重建</td><td>有模板证据时采用经验底线</td><td>机械扣减可能低估结构占比较小的模板</td></tr>
+                  <tr><td>通用递减</td><td>每档原 Seed、Luck</td><td>仅 A/B 由调整后的 Dup1 重建</td><td>A：Dup2；B：Dup3</td><td>每 2 档再降 1</td><td>A=4，B=3</td><td>不再保留原 A/B 梯度</td></tr>
+                  <tr><td>保持一致</td><td>每档原 Seed、Luck</td><td>Dup2–10 的 A/B 沿用调整后的 Dup1</td><td>不降低</td><td>—</td><td>不适用</td><td>十档 A/B 没有参数降难</td></tr>
+                  <tr><td>每个副本递减</td><td>每档原 Seed、Luck</td><td>仅 A/B 由调整后的 Dup1 重建</td><td>A：Dup3；B：Dup4</td><td>每 1 档再降 1</td><td>A=4，B=3</td><td>后段下降较快</td></tr>
+                  <tr><td>每 2 个副本递减</td><td>每档原 Seed、Luck</td><td>仅 A/B 由调整后的 Dup1 重建</td><td>A：Dup3；B：Dup4</td><td>每 2 档再降 1</td><td>A=4，B=3</td><td>可能偏离原 A/B 梯度拐点</td></tr>
+                  <tr><td>每 3 个副本递减</td><td>每档原 Seed、Luck</td><td>仅 A/B 由调整后的 Dup1 重建</td><td>A：Dup3；B：Dup4</td><td>每 3 档再降 1</td><td>A=4，B=3</td><td>后段降难可能过慢</td></tr>
+                </tbody></table></div>
+                <p>重建梯度不会把原本已低于 A=4 / B=3 的值抬高；如有模板实测或经验底线证据，以该模板证据为准。底线不是所有模板的硬规则。</p>
+              </div>
+              <div class="help-section help-example" data-help-section="动态示例：8|0|100|6"><h4>十档变化预览</h4><div class="help-example-controls"><label for="help-gradient-example-mode">示例方案</label><select id="help-gradient-example-mode"><option value="balanced" selected>通用递减</option><option value="flat">保持一致</option><option value="aggressive">每个副本递减</option><option value="steady">每 2 个副本递减</option><option value="gentle">每 3 个副本递减</option></select></div><p>假设调整后的 Dup1 为 8|0|100|6，下方只简写 A/B；实际输出会逐档保留原 Seed 与 Luck。</p><output id="help-gradient-example-output" aria-live="polite">8/6 → 7/6 → 7/5 → 6/5 → 6/4 → 5/4 → 5/3 → 4/3 → 4/3 → 4/3</output></div>
+              <details class="help-details" data-help-section="按需查看：两种索引来源" data-help-level="optional"><summary><span class="help-disclosure-kind">按需查看</span>线上与未上线模板如何追溯</summary><div><p><strong>线上关卡模板索引：</strong>关联 config_level_list 与 config_level，在所选关卡范围查找原模板位置。</p><p><strong>未上线模板参数索引：</strong>通过导出记录找到原模板 ID，再查询全部可用 config_level；多行命中会全部保留并标记重复。</p></div></details>
+              <div class="help-chapter-terms"><strong>本节名词</strong><span>DupPara = A 种类数 | RandomSeed | TowerLucky | B 种类数；Seed 是随机种子，Luck 是塔幸运值。</span></div>
+            </section>
+
+            <section class="help-topic" id="help-calibration" data-help-topic data-help-aliases="消耗 拟合 Seed 随机种子 StrategyGroupId 策略组 1003 1004">
+              <div class="help-topic-heading"><span class="help-kicker">继续与校准</span><h3>按原关卡消耗拟合十档参数</h3><p>给定原关卡 Dup1–10 的实际消耗，为每个新模板搜索完整的十档 A/B 与 Seed；没有精确命中时也输出当前搜索空间最接近值。</p></div>
+              <div class="help-section" data-help-section="校准准备与步骤"><h4>开始前需要什么</h4><ul><li>新模板：输入 ID、上传 _m.bytes 或沿用刚导出的模板。</li><li>历史 CSV：至少包含模板 ID、副本号、DupPara、关卡号、进入人数和人均消耗。StrategyGroupId 非必需。</li><li>config_level.csv 可选上传，只覆盖本次计算；不上传时读取当前 ulinkconfig。</li></ul><h4>怎么操作</h4><ol class="help-steps"><li>确认新模板与原模板对应关系。</li><li>在第一行上传历史副本 CSV；如需覆盖本次配置来源，在旁边上传 config_level.csv。</li><li>在第二行依次选择消耗目标、结构降难策略 ID、结构策略仿真和 Seed 方案。</li><li>结构降难策略 ID 从“和原关卡一致、1003、1004”下拉选择；是否把策略后的盘面纳入仿真由“结构策略仿真”单独决定。</li><li>生成后逐模板审阅十档参数、目标偏差、仿真距离和备选，再决定导出或一键写入。</li></ol></div>
+              <div class="help-section help-priority-panel is-must" data-help-section="必须理解：搜索目标与副本权重" data-help-level="must" data-help-target="help-calibration-objective"><div class="help-section-label">必须理解</div><h4>十个副本都输出，但优先保证前四档</h4><p>整体拟合采用 D1=4、D2=4、D3=2、D4=2、D5–D10=1 的目标权重。D1、D2 最重要，D3、D4 次之；权重只影响“更接近”的排序，不保证上线消耗精确达成。</p><div class="help-state-list"><div><strong>完整输出</strong><span>每个模板始终输出 DupPara1–10（含 Seed）；无法命中目标时明确标出“最接近值”、偏差与复核提示。</span></div><div><strong>Seed 作用</strong><span>Seed 0–31 参与同参数盘面选择与风险校验；不能仅凭 Seed 判断上线消耗。“在已观测 Seed 中搜索”会让历史已观测 Seed 与原 Seed 共同参与主推荐。</span></div><div><strong>结构策略</strong><span>选择“和原关卡一致”时逐模板读取 config_level.StrategyGroupId；选择 1003 或 1004 时，本次固定使用所选策略。</span></div><div><strong>Lucky</strong><span>每个副本保持原值。</span></div></div></div>
+              <details class="help-details" data-help-section="技术口径：策略组如何进入仿真" data-help-level="technical"><summary><span class="help-disclosure-kind">技术口径</span>策略组如何进入十档仿真</summary><div><p>每个副本都读取自己的 InstanceIdN；配置为空、0 或数量为 0 时不应用。模式 1 按配置顺序尝试并补位，模式 2 使用可复现的本地随机次序；最终生效数可能少于请求数。是否从 Dup3 开始降难由当前策略组的实际十档配置决定，不是通用规则。工具先生成该档降难后的 modifiedTemplate，再使用该档 DupPara 与 Seed 生成完整盘面并仿真。</p></div></details>
+              <div class="help-section" data-help-section="校准结果怎么看"><h4>结果怎么看</h4><ul>
+                <li>上传 CSV 后自动匹配模板 ID；只有多个 ID 都可能对应时才需填写前后缀。手动填写前缀后只按剥离后的完整 ID 匹配，不再猜测其他来源。文件扩展名与导出版本号自动识别。</li>
+                <li>名称冲突在开始计算前处理，修正后无需重新上传模板或 CSV。计算中若修改匹配规则，需要重新生成，不能将不同来源的结果混用。</li>
+                <li>预期消耗 = 原线上副本实际消耗 × 模型估计的变化倍率。现有模型使用第 200–300 关原模板与关键结构模板的成对测试数据训练；符合现有结构条件的新关段（如 300–400、1000–1200）也可预估，不再只按关卡号拒算。新关段显示“跨关段预估”，需后续实测校验。</li>
+                <li>加工源与线上源参数不同时，暂按加工源原参数消耗等于本次目标计算，这是工作假设，不是加工源实测值。搜索从加工源各档原 A/B 和原 Seed 开始，在允许的上下限内递减尝试，目标仍取线上数据或手动目标。</li>
+                <li>先比较十档加权消耗偏差，再结合整盘模拟选择 Seed 和细排参数。Seed 不另乘未经验证的消耗系数。跨关段偏差 ≤25% 显示“预估接近”，其余显示“偏差较大”；均不代表已在线上验证。</li>
+                <li>相似历史样本只供对照。导出的区间是训练数据的历史误差参考，不是新关段的精度保证，也不人为压窄；共性说明只在审阅表顶部显示一次。缺少目标或必要输入时才显示“暂无法预估”，保留已有结果供人工审阅。</li>
+                <li>模型版本、训练关段及加工源假设随审阅 CSV 和参数草案导出，便于后续加入更多成对测试数据更新模型。可在允许范围内调整首副本并重算，不存在全局“最低 7”或“Dup1/Dup2 差值”硬规则。</li>
+              </ul><div class="help-callout is-warning"><strong>写入范围</strong><p>“一键写入”会先创建时间戳备份，再原子更新目标 config_level.csv；不改策略表，也不发布线上配置。</p></div></div>
+              <div class="help-chapter-terms"><strong>本节名词</strong><span>StrategyGroupId 是结构降难策略组 ID；1003 与 1004 是当前可选的固定策略，不是 Seed 组。</span></div>
+            </section>
+
+            <section class="help-topic" id="help-settings" data-help-topic data-help-aliases="路径 设置 ulinkconfig 输出目录">
+              <div class="help-topic-heading"><span class="help-kicker">继续与校准</span><h3>管理本机路径</h3><p>路径只影响本机读取、导出和默认配置来源，不会改变算法或把绝对路径写入模板。</p></div>
+              <div class="help-section" data-help-section="设置范围与影响"><h4>修改前后要检查什么</h4><ul><li>Tile 源目录用于按 ID 查找模板；输出工作区用于正式模板与报告；ulinkconfig 用于参数索引和校准默认配置。</li><li>更换输出工作区后，验证报告列表与后续导出都会指向新目录。</li><li>常规参数索引只读 ulinkconfig；消耗校准仅在点击“一键写入”后修改目标 config_level.csv。</li></ul></div>
+            </section>
+
+            <section class="help-topic" id="help-glossary" data-help-topic data-help-aliases="阈值 硬规则 默认值 风险线 仿真 术语 来源">
+              <div class="help-topic-heading"><span class="help-kicker">规则与证据</span><h3>规则与阈值总表</h3><p>先看“性质”：硬规则会阻止非法生成；默认值和经验建议可调整；风险提示只改变推荐，不剥夺人工选择。</p></div>
+              <div class="help-section help-priority-panel is-must" data-help-section="必须理解：阈值性质" data-help-level="must" data-help-target="help-thresholds"><div class="help-section-label">必须理解</div><div class="help-table-wrap"><table class="help-table help-threshold-table"><thead><tr><th>规则或阈值</th><th>性质</th><th>适用范围</th><th>默认 / 口径</th><th>能否修改</th><th>越线结果</th></tr></thead><tbody><tr><td>相邻层单块 100% 全遮</td><td><span class="help-rule-kind is-hard">硬规则</span></td><td>关键结构生成</td><td>禁止单块完全遮挡；多块联合允许</td><td>否</td><td>候选不通过</td></tr><tr><td>结构数量与类型</td><td><span class="help-rule-kind is-hard">硬规则</span></td><td>C–N</td><td>每组 3 格；最多 12 类；自定义项均为正整数</td><td>组数可调，规则不可调</td><td>候选不通过</td></tr><tr><td>结构块组数</td><td><span class="help-rule-kind is-default">工具默认</span></td><td>每个谜题单元</td><td>标准配置默认每种 1 组；可切换自定义向量</td><td>是</td><td>改变结构块精确总量</td></tr><tr><td>非塔结构占比</td><td><span class="help-rule-kind is-hard">硬规则</span></td><td>禁止塔内生成</td><td>不超过非塔 Tile 的 50%</td><td>配置可更低，不可超过</td><td>提交失败</td></tr><tr><td>候选数量</td><td><span class="help-rule-kind is-default">工具默认</span></td><td>每个成品项</td><td>默认 6；建议 6–10；可设 1–20</td><td>是</td><td>影响覆盖度与耗时</td></tr><tr><td>每个成品项搜索上限</td><td><span class="help-rule-kind is-default">工具默认</span></td><td>候选搜索</td><td>默认 2,000；范围 1–100,000</td><td>是</td><td>预算耗尽可续搜，不代表无解</td></tr><tr><td>结构块最大层间距</td><td><span class="help-rule-kind is-default">工具默认</span></td><td>结构布局</td><td>默认最多 5 层</td><td>是</td><td>超出时不生成该候选</td></tr><tr><td>位置 / 对称 / 分布</td><td><span class="help-rule-kind is-default">工具默认</span></td><td>候选搜索与排序</td><td>位置不限制、对称关闭、分布紧凑</td><td>是</td><td>改变搜索方向，不单独证明难度</td></tr><tr><td>重建梯度底线</td><td><span class="help-rule-kind is-advice">经验建议</span></td><td>五种重建方案</td><td>A=4、B=3；原值更低不抬高</td><td>可由模板证据覆盖</td><td>不自动判非法</td></tr><tr><td>消耗目标偏差</td><td><span class="help-rule-kind is-risk">风险提示线</span></td><td>消耗校准</td><td>≤25% 推荐；25%–50% 复核；&gt;50% 不推荐</td><td>当前固定展示口径</td><td>仍输出、可导出、可写入</td></tr><tr><td>7/8/9 格与策略样本</td><td><span class="help-rule-kind is-sim">仿真口径</span></td><td>结构与整板体验</td><td>用于比较容量压力和路径</td><td>随目标选择</td><td>不等于线上胜率或消费因果</td></tr><tr><td>原型置信度与机制压力</td><td><span class="help-rule-kind is-sim">仿真口径</span></td><td>推荐排序</td><td>证据不足时显式降级</td><td>否</td><td>不给伪确定结论</td></tr></tbody></table></div></div>
+              <div class="help-section" data-help-section="术语表"><h4>常用术语</h4><dl class="help-definition-list"><div><dt>成品项</dt><dd>一个源模板加一组成品方案；同一源模板可有多个成品项。</dd></div><div><dt>sN</dt><dd>固定 C–N 结构达到门槛的步数，不自动代表整关难度。</dd></div><div><dt>DupPara</dt><dd>A 种类数 | RandomSeed | TowerLucky | B 种类数。</dd></div><div><dt>StrategyGroupId</dt><dd>结构降难策略组 ID，不是随机种子组。</dd></div><div><dt>硬校验通过</dt><dd>结构、坐标、塔归属、遮挡与结构背包规则通过；不等于所有玩家路径或客户端运行时都已验证。</dd></div><div><dt>机制压力</dt><dd>固定策略样本与揭露路径的压力信号；未经玩家数据标定时不等于玩家风险。</dd></div></dl></div>
+              <details class="help-details" data-help-section="技术口径：当前规则版本与来源" data-help-level="technical"><summary><span class="help-disclosure-kind">技术口径</span>当前规则版本与来源</summary><div class="help-source-list"><div><strong>副本参数梯度</strong><span>当前工具 parameter_recommendation_service.py 实现。</span></div><div><strong>关键结构硬校验</strong><span>当前工具 validator / search 实现与测试。</span></div><div><strong>策略组实例</strong><span>当前 ulinkconfig 的 config_level_strategy_group.csv。</span></div><div><strong>结构降难规则</strong><span>Wiki 页面 277080406 · PRD v85（已核对）。</span></div><div><strong>消耗拟合</strong><span>当前计算版本与本次上传的历史副本数据；输出应保留版本和证据状态。</span></div></div></details>
+            </section>
+
+            <section class="help-topic" id="help-faq" data-help-topic data-help-aliases="问题 错误 不可点 找不到">
+              <div class="help-topic-heading"><span class="help-kicker">规则与证据</span><h3>按现象排查问题</h3><p>先确认状态和输入，再决定修改配置、增加预算或更换路径。</p></div>
+              <div class="help-faq-list" data-help-section="常见问题与恢复路径"><details><summary>“解析模板”为什么不可点？</summary><p>当前导入方式还没有有效模板 ID 或文件。如使用 ID，还需先配置 Tile 源目录。</p></details><details><summary>为什么没找齐候选？</summary><p>查看未完成摘要。“参数已证冲突”需调整配置；“当前预算未找到”可提高累计预算继续搜索。</p></details><details><summary>“证据不足 / 不推荐”能导出吗？</summary><p>可以。它们是决策提示，不是禁用。查看原因、人工确认后可继续，结论会写入导出记录和报告。</p></details><details><summary>为什么提示找不到原模板或导出记录？</summary><p>未上线索引和消耗校准需要导出记录建立“新模板 → 原模板”对应。请使用正式导出文件，并确认它与当前输出工作区一致。</p></details><details><summary>历史 CSV 没有 StrategyGroupId 怎么办？</summary><p>不影响拆解。选择“和原关卡一致”时，策略 ID 来自 config_level，不要求历史 CSV 提供。</p></details><details><summary>为什么重启工具后任务不见了？</summary><p>运行中任务和未导出候选只存在于当前本地服务会话。已正式导出的模板和报告仍保留在输出工作区。</p></details><details><summary>消耗校准的一键写入会改什么？</summary><p>只备份并更新目标 config_level.csv。它不修改策略表，不提交 Git，也不发布线上配置。</p></details></div>
+            </section>
+
+            <div class="help-empty is-hidden" id="help-empty"><strong>没有找到相关说明</strong><p>试试搜索功能名、按钮文案或字段名，例如“Seed”、“导出”或“StrategyGroupId”。</p><button class="secondary-button" id="clear-help-search" type="button">清除搜索</button></div>
+          </main>
+        </div>
+      </div>
+    </dialog>
+  </body>
+</html>

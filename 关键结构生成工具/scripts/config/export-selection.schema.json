@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/key-structure-ai/export-selection.schema.json",
+  "title": "关键结构生成工具正式导出选择",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "selections"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "selections": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["template_key", "resolved_plan_id", "candidate_id"],
+        "properties": {
+          "template_key": {"type": "string", "minLength": 1, "maxLength": 240},
+          "resolved_plan_id": {"type": "string", "minLength": 1, "maxLength": 240},
+          "candidate_id": {
+            "type": "string",
+            "pattern": "^candidate_[0-9a-f]{16}$",
+            "maxLength": 240
+          },
+          "online_level_number": {"type": ["string", "integer", "null"]},
+          "level_id": {"type": ["string", "null"], "maxLength": 240},
+          "manual_evidence_override": {
+            "type": "boolean",
+            "description": "用于人工确认规则、难度或证据提示后继续导出；不能覆盖候选身份、源文件或重写完整性错误"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "selections": [
+    {
+      "template_key": "hr0029",
+      "resolved_plan_id": "常规5步",
+      "candidate_id": "candidate_0123456789abcdef",
+      "online_level_number": 300,
+      "level_id": "可选的关卡ID",
+      "manual_evidence_override": false
+    }
+  ]
+}

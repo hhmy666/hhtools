@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "template_keys": ["hr0029"],
+  "generation_defaults": {
+    "candidate_count": 4,
+    "allowed_types": ["C", "D", "E", "F", "G"],
+    "unit_defaults": {
+      "type_count": {
+        "kind": "random",
+        "minimum": 3,
+        "maximum": 5
+      }
+    }
+  },
+  "batch_plans": [
+    {
+      "plan_id": "自动种子常规5步",
+      "units": [
+        {
+          "unit_id": "U1",
+          "step": 5
+        }
+      ]
+    }
+  ]
+}

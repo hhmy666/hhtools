@@ -1,0 +1,27 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "frontend/index.html"
+        ],
+        "createdAt": "2026-10-13T10:04:24.237Z",
+        "reason": "Agent verified all current instances: dialog headers/bodies provide 14-26px inset; matrix/help table cells provide 12px/14px inset; FAQ summaries provide 16px top inset; the 36px environment pill centers a 14px line with 10px vertical clearance. Wrapper-only detection misses these nested and flex clearances. Desktop/600px screenshots confirm spacing."
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "frontend/assets/styles.css",
+          "frontend/index.html"
+        ],
+        "createdAt": "2026-10-13T10:04:24.251Z",
+        "reason": "User confirmed this task only standardizes layout and typography while preserving the original visual expression. Existing green/amber edge stripes communicate selected navigation, selected templates, and applied suggestions; frontend/DESIGN.md documents the inset jade navigation accent. Retain these established state signals."
+      }
+    ]
+  }
+}
