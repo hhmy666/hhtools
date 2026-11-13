@@ -92,6 +92,20 @@ def _config(
 
 
 class JobServiceTests(unittest.TestCase):
+    def test_batch_summary_does_not_serialize_candidate_details(self):
+        candidate = SimpleNamespace(candidate=SimpleNamespace(structure_signature="layout"))
+        item = SimpleNamespace(
+            status="success", candidates=(candidate,), target_candidate_count=2,
+            as_dict=lambda: self.fail("summary must not serialize candidate details"),
+        )
+        result = GenerationBatchResult(1, 99, "batch", "source", "test", (item,))
+        summary = result.summary()
+        self.assertEqual(summary["success_count"], 1)
+        self.assertEqual(summary["candidate_found_count"], 1)
+        self.assertEqual(summary["candidate_target_count"], 2)
+        self.assertEqual(summary["independent_experience_signature_count"], 1)
+        self.assertEqual(result.as_dict(presented_items=[])["summary"], summary)
+
     def test_resume_progress_retains_completed_items_after_active_item(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -535,6 +549,55 @@ class JobServiceTests(unittest.TestCase):
             self.assertEqual(retried.run_status, "completed")
             self.assertEqual([item.status for item in retried.items], ["success", "success"])
             self.assertIs(retried.items[0], completed)
+
+    def test_last_validated_candidate_finishes_without_a_full_running_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "chain001_m.bytes"
+            source.write_bytes(_chain_bytes("chain001"))
+            profile = Profile("test", "test", None, None, str(root / "output"))
+            control = CooperativeTaskControl()
+            observed = []
+
+            # Request cancellation instead of pausing the old implementation
+            # indefinitely when it publishes a premature full snapshot.
+            def cancel_at_full_snapshot(value):
+                observed.append(value)
+                if value.items and value.items[0].candidates:
+                    control.request_cancel()
+
+            result = generate_batch(
+                _config(["chain001"]), profile, file_inputs={"chain001": source},
+                control=control, progress_callback=cancel_at_full_snapshot,
+            )
+            self.assertEqual(result.run_status, "completed")
+            self.assertEqual(control.state, "completed")
+            self.assertFalse(any(row.candidates for value in observed for row in value.items))
+
+    def test_cancelled_continuation_keeps_later_partial_candidates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            keys = ["first", "second"]
+            files = {key: root / f"{key}_m.bytes" for key in keys}
+            for key, path in files.items():
+                path.write_bytes(_chain_bytes(key))
+            config = _config(keys, candidate_count=2)
+            profile = Profile("test", "test", None, None, str(root / "output"))
+            initial = generate_batch(config, profile, file_inputs=files)
+            first, second = initial.items
+            self.assertTrue(second.candidates)
+            self.assertTrue(first.candidates)
+            active = replace(first, status="partial", candidates=first.candidates[:1])
+            retained = replace(second, status="partial", candidates=second.candidates[:1])
+            previous = replace(initial, items=(active, retained), run_status="partial")
+            control = CooperativeTaskControl()
+            control.request_cancel()
+            result = generate_batch(config, profile, file_inputs=files,
+                                    previous_result=previous, control=control)
+            self.assertIs(result.items[1], retained)
+            self.assertEqual(result.items[0].candidates, active.candidates)
+            self.assertIs(result.items[0].source, active.source)
+            self.assertEqual(result.run_status, "partial")
 
     def test_candidate_slots_lock_ranges_and_full_seed_digests(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

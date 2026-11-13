@@ -262,7 +262,7 @@ class GenerationBatchResult:
     def pending(self) -> int:
         return sum(item.status == "pending" for item in self.items)
 
-    def as_dict(self) -> dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
         work_item_count = max(
             len(self.items),
             int(self.total_work_item_count or 0),
@@ -280,6 +280,42 @@ class GenerationBatchResult:
             for candidate in item.candidates
         }
         return {
+            "run_status": self.run_status,
+            "work_item_count": work_item_count,
+            "success_count": self.succeeded,
+            "partial_success_count": self.partially_succeeded,
+            "usable_count": self.usable,
+            "failure_count": self.failed,
+            "cancelled_count": self.cancelled,
+            "pending_count": pending_count,
+            "running_count": running_count,
+            "classified_work_item_count": (
+                self.succeeded
+                + self.partially_succeeded
+                + self.failed
+                + self.cancelled
+                + pending_count
+                + running_count
+            ),
+            "retryable_count": (
+                self.failed
+                + self.partially_succeeded
+                + self.cancelled
+                + pending_count
+            ),
+            "candidate_found_count": sum(
+                len(item.candidates) for item in self.items
+            ),
+            "candidate_target_count": candidate_target_count,
+            "independent_experience_signature_count": len(
+                independent_experience_signatures
+            ),
+        }
+
+    def as_dict(
+        self, *, presented_items: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        return {
             "format_version": self.format_version,
             "batch_seed": self.batch_seed,
             "batch_seed_source": self.batch_seed_source,
@@ -290,39 +326,11 @@ class GenerationBatchResult:
             if self.locked_config_snapshot is None
             else dict(self.locked_config_snapshot),
             "source_snapshot_id": self.source_snapshot_id,
-            "summary": {
-                "run_status": self.run_status,
-                "work_item_count": work_item_count,
-                "success_count": self.succeeded,
-                "partial_success_count": self.partially_succeeded,
-                "usable_count": self.usable,
-                "failure_count": self.failed,
-                "cancelled_count": self.cancelled,
-                "pending_count": pending_count,
-                "running_count": running_count,
-                "classified_work_item_count": (
-                    self.succeeded
-                    + self.partially_succeeded
-                    + self.failed
-                    + self.cancelled
-                    + pending_count
-                    + running_count
-                ),
-                "retryable_count": (
-                    self.failed
-                    + self.partially_succeeded
-                    + self.cancelled
-                    + pending_count
-                ),
-                "candidate_found_count": sum(
-                    len(item.candidates) for item in self.items
-                ),
-                "candidate_target_count": candidate_target_count,
-                "independent_experience_signature_count": len(
-                    independent_experience_signatures
-                ),
-            },
-            "items": [item.as_dict() for item in self.items],
+            "summary": self.summary(),
+            "items": (
+                [item.as_dict() for item in self.items]
+                if presented_items is None else presented_items
+            ),
         }
 
 
@@ -707,10 +715,16 @@ def generate_batch(
     excluded_failure_kinds = frozenset(
         str(value) for value in excluded_retry_failure_kinds
     )
-    previous_by_key = {
-        (item.template_key, item.plan_id, item.plan_signature): item
-        for item in (() if previous_result is None else previous_result.items)
-    }
+    previous_by_key = {}
+    for item in (() if previous_result is None else previous_result.items):
+        if (
+            item.status in {"partial", "cancelled"}
+            and item.source is not None
+            and 0 < item.target_candidate_count <= len(item.candidates)
+            and (item.error or {}).get("failure_kind") == "user_stopped"
+        ):
+            item = replace(item, status="success", error=None)
+        previous_by_key[(item.template_key, item.plan_id, item.plan_signature)] = item
 
     def build_result(
         rows: list[GenerationItemResult], run_status: str
@@ -767,10 +781,11 @@ def generate_batch(
             )
         ):
             results.append(previous_item)
-            publish(results, "running")
+            if not mark_control_completed or work_index + 1 < len(config.work_items):
+                publish(results, "running")
             continue
-        source = None
-        inspection = None
+        source = None if previous_item is None else previous_item.source
+        inspection = None if previous_item is None else previous_item.inspection
         seed = 0 if previous_item is None else previous_item.generation_seed
         seed_sha256 = (
             "" if previous_item is None else previous_item.generation_seed_sha256
@@ -1064,6 +1079,8 @@ def generate_batch(
                 # Candidate slots are independent.  Publish each completed slot
                 # immediately so the UI can show useful work before the full
                 # requested count has been reached.
+                if len(generated_items) == target_candidate_count:
+                    break
                 publish(
                     results
                     + [
@@ -1150,7 +1167,8 @@ def generate_batch(
                     slot_attempts_completed=dict(slot_attempts_completed),
                 )
             )
-            publish(results, "running")
+            if not mark_control_completed or work_index + 1 < len(config.work_items):
+                publish(results, "running")
         except OperationCancelledError as exc:
             retained_candidates = _recommend_candidates(generated_items)
             item_status = "partial" if retained_candidates else "cancelled"
@@ -1197,7 +1215,7 @@ def generate_batch(
                     remaining.plan.signature,
                 )
                 retained = previous_by_key.get(remaining_key)
-                if retained is not None and retained.status not in retryable:
+                if retained is not None:
                     results.append(retained)
                 else:
                     results.append(
@@ -1261,25 +1279,23 @@ def generate_batch(
                 )
             )
             publish(results, "running")
+    # The final candidate has already passed independent validation. A late
+    # pause or stop must not hold or downgrade a fully satisfied batch.
+    if all(item.status == "success" for item in results):
+        if control is not None and mark_control_completed:
+            control.mark_completed(honor_cancellation=False)
+        return build_result(results, "completed")
     if control is not None:
         try:
             control.checkpoint("generation_complete")
         except OperationCancelledError:
-            if all(item.status == "success" for item in results):
-                terminal_status = "completed"
-            elif any(item.candidates for item in results):
-                terminal_status = "partial"
-            else:
-                terminal_status = "cancelled"
+            terminal_status = "partial" if any(item.candidates for item in results) else "cancelled"
             final = build_result(results, terminal_status)
             publish(results, terminal_status)
             return final
         if mark_control_completed:
             control.mark_completed()
-    if any(item.status in {"failed", "partial", "cancelled", "pending"} for item in results):
-        run_status = "partial" if any(item.candidates for item in results) else "failed"
-    else:
-        run_status = "completed"
+    run_status = "partial" if any(item.candidates for item in results) else "failed"
     return build_result(results, run_status)
 
 

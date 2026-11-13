@@ -1826,14 +1826,13 @@
     const availableResult = availableResultForJob(job);
     const resultItems = availableResult?.items || [];
     const retainedCandidateCount = resultItems.reduce((sum, item) => sum + (item.candidates?.length || 0), 0);
-    const reportedSearchFound = Number(job.search?.candidate_found_count);
-    const searchFound = Number.isFinite(reportedSearchFound)
-      ? Math.max(reportedSearchFound, retainedCandidateCount)
-      : retainedCandidateCount;
+    const searchFound = availableResult
+      ? retainedCandidateCount
+      : Number(job.search?.candidate_found_count ?? 0);
     const searchTarget = Number(job.search?.candidate_target_count);
     const hasCandidateTarget = Number.isFinite(searchFound) && Number.isFinite(searchTarget) && searchTarget > 0;
     const percent = hasCandidateTarget
-      ? clamp(Math.round((searchFound / searchTarget) * 100), 0, 100)
+      ? clamp(Math.floor((searchFound / searchTarget) * 100), 0, 100)
       : total ? Math.round((finished / total) * 100) : 0;
     const phase = generationPhase(job);
     const active = ["queued", "running", "pause_requested", "paused", "cancel_requested"].includes(job.status);
@@ -1988,7 +1987,9 @@
   function itemNeedsMoreCandidates(item) {
     if (!item?.candidates?.length) return false;
     const progress = itemCandidateProgress(item);
-    return item.status === "partial" || (progress.target !== null && progress.found < progress.target);
+    return progress.target !== null && progress.target > 0
+      ? item.candidates.length < progress.target
+      : item.status === "partial";
   }
   function itemErrorCode(item) { return item?.error?.code || item?.error?.detail?.code || ""; }
   function failureKind(item) {

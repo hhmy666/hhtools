@@ -52,3 +52,12 @@ test('partial live snapshots preserve absent templates explicit choices', () => 
   initialize();
   assert.deepEqual([...selected], [['a',['a1']]]);
 });
+
+test('a stale partial status does not make a full candidate row unfinished', () => {
+  const start = source.indexOf('  function itemCandidateProgress(');
+  const end = source.indexOf('  function itemErrorCode(', start);
+  const needsMore = Function(`${source.slice(start, end)}; return itemNeedsMoreCandidates;`)();
+  const row = { status: 'partial', candidates: [{}, {}, {}, {}], target_candidate_count: 4 };
+  assert.equal(needsMore(row), false);
+  assert.equal(needsMore({ ...row, candidates: row.candidates.slice(0, 3) }), true);
+});

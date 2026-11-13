@@ -91,9 +91,9 @@ class CooperativeTaskControl:
                     evidence={"phase": phase},
                 )
 
-    def mark_completed(self) -> None:
+    def mark_completed(self, *, honor_cancellation: bool = True) -> None:
         with self._condition:
-            if self._state not in {"cancel_requested", "cancelled"}:
+            if not honor_cancellation or self._state not in {"cancel_requested", "cancelled"}:
                 self._state = "completed"
             self._condition.notify_all()
 

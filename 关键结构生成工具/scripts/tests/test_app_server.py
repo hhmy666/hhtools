@@ -546,7 +546,11 @@ class AppStateTests(unittest.TestCase):
                 run_status="completed",
             )
 
-            presented = state._present_result(job, result)
+            item_cache = {}
+            presented = state._present_result(job, result, item_cache=item_cache)
+            with patch("app.build_candidate_board", side_effect=AssertionError("unchanged board rebuilt")):
+                final = state._present_result(job, result, item_cache=item_cache)
+            self.assertEqual(final, presented)
 
         provenance = presented["items"][0]["candidates"][0]["parameter_provenance"]
         self.assertTrue(provenance["non_uniform"])
@@ -605,7 +609,7 @@ class AppStateTests(unittest.TestCase):
             )
             job.result = SimpleNamespace(
                 items=(item,),
-                as_dict=lambda: {"summary": {"run_status": "failed"}},
+                summary=lambda: {"run_status": "failed"},
             )
 
             summary = job.summary()
@@ -738,10 +742,12 @@ class AppStateTests(unittest.TestCase):
                 "search_budget_limit_reached",
             )
             self.assertTrue(presented["items"][1]["resume"]["resumable"])
+            job.presentation = presented
 
             with patch("app.threading.Thread") as thread_factory:
                 state.control_job(job.job_id, "resume_unfinished")
                 thread_factory.return_value.start.assert_called_once_with()
+            self.assertIs(job.presentation, presented)
             self.assertEqual(job.attempt_budget_multiplier, 16)
             self.assertEqual(
                 job.excluded_retry_failure_kinds,
@@ -787,7 +793,7 @@ class AppStateTests(unittest.TestCase):
             )
             job.result = SimpleNamespace(
                 items=(item,),
-                as_dict=lambda: {"summary": {"run_status": "partial"}},
+                summary=lambda: {"run_status": "partial"},
             )
             job.status = "partial"
             job.cumulative_elapsed_seconds = 12.0
@@ -1973,7 +1979,7 @@ class AppStateTests(unittest.TestCase):
             )
             job.result = SimpleNamespace(
                 items=(item,),
-                as_dict=lambda: {"summary": {"run_status": "running"}},
+                summary=lambda: {"run_status": "running"},
             )
             job.status = "pause_requested"
             self.assertTrue(job.control.request_pause())

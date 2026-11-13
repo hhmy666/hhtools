@@ -135,10 +135,6 @@ RECOVERABLE_PREFLIGHT_CODES = frozenset(
 )
 
 
-def _json_ready(value: Any) -> Any:
-    return json.loads(canonical_json(value))
-
-
 def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -554,7 +550,7 @@ class JobRecord:
     def summary(self) -> dict[str, Any]:
         result_summary = None
         if self.result is not None:
-            result_summary = self.result.as_dict().get("summary")
+            result_summary = self.result.summary()
         control = self.control.snapshot()
         visible_status = self.status
         if self.status in {"queued", "running", "pause_requested", "paused"}:
@@ -2560,10 +2556,15 @@ class AppState:
             )
             self._set_current_work_item(job, 0)
         try:
+            presentation_cache: dict[tuple[str, str, str], tuple[GenerationItemResult, dict[str, Any]]] = {}
+
             def progress(value: GenerationBatchResult) -> None:
+                # Rendering traces and boards is CPU-intensive. Keep it out
+                # of the lock shared by job queries and export submission.
+                presentation = self._present_result(job, value, item_cache=presentation_cache)
                 with self.lock:
                     job.result = value
-                    job.presentation = self._present_result(job, value)
+                    job.presentation = presentation
                     job.last_progress_at = _now()
                     # A previously processed partial/failed row becomes running
                     # on continuation; it must not erase the task's baseline.
@@ -2627,13 +2628,14 @@ class AppState:
                     ),
                     run_status="partial",
                 )
-            presentation = self._present_result(job, result)
+            presentation = self._present_result(job, result, item_cache=presentation_cache)
             # Publish recommendation cards before exposing the terminal job
             # state.  A client that observes completion therefore never misses
             # the cards; recommendations_pending tells it whether bounded
             # verification trials still need polling.
             try:
-                self._prepare_generation_recommendations(job_id, result)
+                if result.run_status != "completed":
+                    self._prepare_generation_recommendations(job_id, result)
             except Exception as recommendation_error:
                 with self.lock:
                     job.add_event(
@@ -2655,7 +2657,7 @@ class AppState:
                 job.completed_at = completed_at
                 job.last_progress_at = completed_at
                 job.revision += 1
-                result_summary = result.as_dict()["summary"]
+                result_summary = result.summary()
                 job.add_event(
                     result.run_status,
                     status=result.run_status,
@@ -2770,7 +2772,7 @@ class AppState:
                             "cancelled",
                             status="cancelled",
                             message="生成任务已取消",
-                            details=result.as_dict()["summary"],
+                            details=result.summary(),
                             at=completed_at,
                         )
                         job.worker = None
@@ -2899,7 +2901,6 @@ class AppState:
                     len(item.candidates) for item in job.result.items
                 ) if job.result else 0
                 job.error = None
-                job.presentation = None
                 job.progress_completed = max(job.progress_completed, self._completed_work_item_count(job.result) if job.result else 0)
                 job.current_work_item = None
                 job.retry_statuses = ("failed", "partial", "cancelled", "pending")
@@ -3104,7 +3105,8 @@ class AppState:
         }
 
     def _present_result(
-        self, job: JobRecord, result: GenerationBatchResult
+        self, job: JobRecord, result: GenerationBatchResult, *,
+        item_cache: dict[tuple[str, str, str], tuple[GenerationItemResult, dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
         work_by_key = {
             (work.template_key, work.plan.plan_id, work.plan.signature): work
@@ -3117,10 +3119,13 @@ class AppState:
             ).append(work)
         items: list[dict[str, Any]] = []
         for item in result.items:
+            key = (item.template_key, item.plan_id, item.plan_signature)
+            cached = item_cache.get(key) if item_cache is not None else None
+            if cached is not None and cached[0] is item:
+                items.append(cached[1])
+                continue
             payload = item.as_dict()
-            work = work_by_key.get(
-                (item.template_key, item.plan_id, item.plan_signature)
-            )
+            work = work_by_key.get(key)
             if work is None:
                 matches = work_by_resolved_id.get(
                     (item.template_key, item.plan_id), []
@@ -3184,11 +3189,12 @@ class AppState:
                 payload["comparison"] = build_candidate_comparison(
                     item.source, item.candidates
                 )
+            if item_cache is not None:
+                item_cache[key] = (item, payload)
             items.append(payload)
-        base = result.as_dict()
+        base = result.as_dict(presented_items=items)
         # Preserve the complete seed in browser state for copy/lock/replay.
         base["batch_seed"] = str(result.batch_seed)
-        base["items"] = items
         return base
 
     def job_source_preview(self, job_id: str, template_key: str) -> dict[str, Any]:
@@ -4162,9 +4168,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _send_json(self, payload: Any, status: int = HTTPStatus.OK) -> None:
-        data = json.dumps(
-            _json_ready(payload), ensure_ascii=False, separators=(",", ":")
-        ).encode("utf-8")
+        # Canonical JSON is already a complete wire representation. Avoid
+        # decoding and encoding it again, especially for large candidate polls.
+        data = canonical_json(payload).encode("utf-8")
         self._headers("application/json; charset=utf-8", len(data), int(status))
         self.wfile.write(data)
 
@@ -4286,11 +4292,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             if path.startswith("/api/v1/jobs/"):
                 job_id = path.removeprefix("/api/v1/jobs/").strip("/")
                 job = self.app.get_job(job_id)
-                payload = {"ok": True, **job.summary()}
-                if job.presentation is not None:
-                    payload["result"] = job.presentation
-                if job.export_result is not None:
-                    payload["export_result"] = job.export_result
+                with self.app.lock:
+                    payload = {"ok": True, **job.summary()}
+                    if job.presentation is not None:
+                        payload["result"] = job.presentation
+                    if job.export_result is not None:
+                        payload["export_result"] = job.export_result
                 self._send_json(payload)
                 return
             if path == "/api/v1/reports":
