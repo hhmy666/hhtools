@@ -42,7 +42,7 @@ def choose_local_directory():
 TOOL_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_ROOT = TOOL_ROOT / "frontend"
 SERVICE_ID = "tile-family.tower-ratio-reducer-tool"
-APP_VERSION = "0.9.3"
+APP_VERSION = "0.9.4"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8766
 LAST_PORT = 8775

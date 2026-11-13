@@ -602,17 +602,30 @@ async function initialize() {
     const bootstrap = asObject(await apiRequest("/api/bootstrap"));
     state.bootstrap = bootstrap;
     state.csrfToken = asText(bootstrap.csrf_token);
-    setServiceStatus("is-online", "本地服务已连接");
-    if (safeStorage.failed) showToast("浏览器本地存储不可用，本次仍可正常操作，刷新后不会自动恢复当前任务。", "error");
-    renderHistory();
-    await loadSettings(true);
-    if (state.currentJobId) {
-      await loadJob(state.currentJobId, false);
-      if (state.currentJob && !TERMINAL_JOB_STATES.has(state.currentJob.status)) schedulePoll();
-    }
   } catch (error) {
     setServiceStatus("is-offline", "本地服务不可用");
     showToast(`无法连接本地服务：${error.message}`, "error");
+    return;
+  }
+
+  setServiceStatus("is-online", "本地服务已连接");
+  if (safeStorage.failed) showToast("浏览器本地存储不可用，本次仍可正常操作，刷新后不会自动恢复当前任务。", "error");
+  renderHistory();
+  await loadSettings(true);
+
+  const jobId = state.currentJobId;
+  if (!jobId) return;
+  try {
+    await loadJob(jobId, false, true);
+    if (state.currentJob && !TERMINAL_JOB_STATES.has(state.currentJob.status)) schedulePoll();
+  } catch (error) {
+    if (state.currentJobId !== jobId) return;
+    if (error.code === "job_not_found" && error.status === 404) {
+      state.currentJobId = "";
+      safeStorage.remove("tower-reducer-current-job");
+      return;
+    }
+    showToast(`无法恢复上次任务：${error.message}`, "error");
   }
 }
 

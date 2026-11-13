@@ -387,7 +387,7 @@ class CliSafetyTests(unittest.TestCase):
         self.assertIn("端口 8765 已被其他程序占用", error_output.getvalue())
         self.assertNotIn("Traceback", error_output.getvalue())
 
-    def test_existing_tool_identity_is_strict_with_narrow_legacy_support(self):
+    def test_existing_tool_requires_current_version_and_service_identity(self):
         current = {
             "status": "ready",
             "version": APP_VERSION,
@@ -399,12 +399,9 @@ class CliSafetyTests(unittest.TestCase):
         wrong = {**current, "service_id": "another-service"}
         with patch("app._read_local_json", return_value=(wrong, "Other/1.0")):
             self.assertFalse(_is_existing_tool("127.0.0.1", 8765))
-        legacy = {"status": "ready", "version": APP_VERSION}
-        with patch(
-            "app._read_local_json",
-            return_value=(legacy, "PlayerBehaviourLocal/1.0 Python/3.9"),
-        ):
-            self.assertTrue(_is_existing_tool("127.0.0.1", 8765))
+        old = {**current, "version": "1.0.1"}
+        with patch("app._read_local_json", return_value=(old, "PlayerBehaviourLocal/1.0")):
+            self.assertFalse(_is_existing_tool("127.0.0.1", 8765))
 
     def test_local_probe_rejects_redirect_html_oversize_invalid_json_and_timeout(self):
         class FakeResponse:

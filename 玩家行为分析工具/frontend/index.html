@@ -373,18 +373,5 @@
         <div class="confirm-actions"><button class="secondary-button" value="cancel">取消</button><button class="danger-button" id="confirm-restart" value="confirm">清空当前流程</button></div>
       </form>
     </dialog>
-    <dialog id="local-path-setup" class="local-path-setup" aria-labelledby="local-path-title">
-    <h2 id="local-path-title">确认本机路径</h2>
-    <p>已查找当前用户主目录下常见的模板和配置仓。请确认实际目录。可以稍后配置，分析前会检查这些依赖。</p>
-    <div class="local-path-fields">
-      <label for="setup-template">关卡模板目录</label><div class="local-path-row"><input id="setup-template" type="text" spellcheck="false" autocomplete="off" placeholder="未找到，请选择目录"><button type="button" class="secondary-button" data-pick-path="setup-template">选择目录</button></div>
-      <label for="setup-config">配置仓库或 CSV 目录</label><div class="local-path-row"><input id="setup-config" type="text" spellcheck="false" autocomplete="off" placeholder="未找到，请选择目录"><button type="button" class="secondary-button" data-pick-path="setup-config">选择目录</button></div>
-    </div>
-    <p id="local-path-feedback" role="status" hidden></p>
-    <div class="local-path-actions">
-      <button type="button" class="secondary-button" id="local-path-skip">稍后配置</button>
-      <button type="button" class="primary-button" id="local-path-confirm">确认使用</button>
-    </div>
-  </dialog>
 </body>
 </html>

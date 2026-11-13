@@ -1359,43 +1359,6 @@
     }
   }
 
-  function showLocalPathSetup() {
-    const dialog = $("#local-path-setup");
-    if (localStorage.getItem("playerBehavior.pathsConfirmed") ||
-        sessionStorage.getItem("playerBehavior.pathsDeferred")) return;
-    const notice = $("#local-path-feedback");
-    $("#setup-template").value = state.settings.template_path;
-    $("#setup-config").value = state.settings.config_path;
-    $("#local-path-confirm").onclick = async () => {
-      const paths = { template_path: $("#setup-template").value.trim(),
-                      config_path: $("#setup-config").value.trim() };
-      const button = $("#local-path-confirm");
-      button.disabled = true;
-      try {
-        const statuses = await api("/api/settings/paths", { method: "POST", body: JSON.stringify(paths) });
-        if (statuses.template_path?.status !== "ready" || statuses.config_path?.status !== "ready") {
-          notice.textContent = "请选择两个可读取的目录，或点击「稍后配置」。";
-          notice.hidden = false;
-          return;
-        }
-        applySettings({ ...state.settings, ...paths });
-        localStorage.setItem("playerBehavior.settings", JSON.stringify(state.settings));
-        localStorage.setItem("playerBehavior.pathsConfirmed", "1");
-        updatePathStatus(statuses);
-        dialog.close();
-      } catch (error) {
-        notice.textContent = error.message;
-        notice.hidden = false;
-      } finally {
-        button.disabled = false;
-      }
-    };
-    const defer = () => sessionStorage.setItem("playerBehavior.pathsDeferred", "1");
-    $("#local-path-skip").onclick = () => { defer(); dialog.close(); };
-    dialog.addEventListener("cancel", defer, { once: true });
-    dialog.showModal();
-  }
-
   async function loadBootstrap() {
     setServiceStatus("checking", "正在连接本地服务");
     try {
@@ -1413,7 +1376,6 @@
       restoreResultSnapshot("player");
       restoreResultSnapshot("online");
       if (saved) await refreshLocalPaths();
-      showLocalPathSetup();
       await restoreCurrentJobs();
       if (data.demo === true && data.demo_data) hydrateServerDemo(data.demo_data);
     } catch (error) {
@@ -1543,45 +1505,33 @@
       }
     });
 
-  document.querySelectorAll("[data-pick-path]").forEach(button => {
-    button.addEventListener("click", async () => {
-      const input = document.getElementById(button.dataset.pickPath);
-      const feedback = button.closest("dialog")?.querySelector("[role=status]");
-      button.disabled = true;
-      if (feedback) feedback.hidden = true;
-      try {
-        const payload = await api("/api/dialog/directory", { method: "POST", body: "{}" });
-        if (payload.path) {
-          input.value = payload.path;
+    $$("[data-pick-path]").forEach(button => {
+      button.addEventListener("click", async () => {
+        const input = document.getElementById(button.dataset.pickPath);
+        button.disabled = true;
+        try {
+          const payload = await api("/api/dialog/directory", { method: "POST", body: "{}" });
+          if (payload.path) input.value = payload.path;
+        } catch (error) {
+          const message = error.details?.code === "not_found"
+            ? "请关闭旧版工具的终端窗口，再用新版启动器打开。"
+            : error.message;
+          toast(message, "error");
+        } finally {
+          button.disabled = false;
         }
-      } catch (error) {
-        if (feedback) {
-          feedback.textContent = error.message;
-          feedback.hidden = false;
-        } else {
-          toast(error.message, "error");
-        }
-      } finally {
-        button.disabled = false;
-      }
+      });
     });
-  });
     $("#save-settings").addEventListener("click", async () => {
       state.settings = currentSettings();
       localStorage.setItem("playerBehavior.settings", JSON.stringify(state.settings));
-      const paths = await refreshLocalPaths();
-      if (paths?.template_path?.status === "ready" && paths?.config_path?.status === "ready") {
-        localStorage.setItem("playerBehavior.pathsConfirmed", "1");
-      } else {
-        localStorage.removeItem("playerBehavior.pathsConfirmed");
-      }
+      await refreshLocalPaths();
       toast("路径已保存在本浏览器。");
       route("workspace");
     });
     $("#reset-paths").addEventListener("click", () => {
       applySettings(state.bootstrap?.paths || DEFAULT_PATHS);
       localStorage.removeItem("playerBehavior.settings");
-      localStorage.removeItem("playerBehavior.pathsConfirmed");
       updatePathStatus(state.bootstrap?.paths || {});
     });
 

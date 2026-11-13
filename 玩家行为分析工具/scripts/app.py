@@ -79,7 +79,7 @@ from services.storage import (  # noqa: E402
 )
 
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 APP_NAME = "玩家行为分析工具"
 SERVICE_ID = "tile-family.player-behaviour-analysis-tool"
 SERVICE_PROTOCOL = 1
@@ -1195,19 +1195,12 @@ def _is_existing_tool(host: str, port: int, *, timeout: float = 0.8) -> bool:
     )
     if not health_response:
         return False
-    health, server_header = health_response
-    if health.get("status") != "ready":
-        return False
-    if (
-        health.get("service_id") == SERVICE_ID
+    health, _ = health_response
+    return (
+        health.get("status") == "ready"
+        and health.get("service_id") == SERVICE_ID
         and health.get("protocol") == SERVICE_PROTOCOL
-    ):
-        return True
-    # Narrow compatibility path for the already-running 1.0.0 service that
-    # predates SERVICE_ID.  The direct client never follows redirects.
-    return bool(
-        server_header.split(" ", 1)[0] == "PlayerBehaviourLocal/1.0"
-        and dict(health) == {"status": "ready", "version": APP_VERSION}
+        and health.get("version") == APP_VERSION
     )
 
 
