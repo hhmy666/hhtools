@@ -12,6 +12,7 @@ import json
 import math
 import mimetypes
 import re
+import subprocess
 import secrets
 import sys
 import threading
@@ -25,6 +26,23 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
+
+
+def choose_local_directory():
+    if sys.platform != "darwin":
+        return {"error": "当前系统不支持目录选择，请手动输入路径。"}
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", 'POSIX path of (choose folder with prompt "选择本机目录")'],
+            capture_output=True, text=True, timeout=90, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"error": "目录选择未完成，请重试或手动输入。"}
+    if result.returncode:
+        if "(-128)" in result.stderr:
+            return {"cancelled": True}
+        return {"error": "无法打开系统目录选择器，请手动输入。"}
+    return {"path": result.stdout.rstrip("\n").rstrip("/") or "/"}
 
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
@@ -61,7 +79,7 @@ from services.storage import (  # noqa: E402
 )
 
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 APP_NAME = "玩家行为分析工具"
 SERVICE_ID = "tile-family.player-behaviour-analysis-tool"
 SERVICE_PROTOCOL = 1
@@ -466,8 +484,12 @@ class Application:
 
     def bootstrap(self) -> dict[str, Any]:
         recent = [_public_job(item) for item in self.jobs.discover(limit=10, recover_interrupted=False)]
-        config_exists = DEFAULT_CONFIG_PATH.is_dir()
-        template_exists = DEFAULT_TEMPLATE_PATH.is_dir()
+        home = Path.home()
+        roots = (home, home / "Projects", home / "Documents", home / "Desktop")
+        config_path = next((str(base / "ulinkconfig/csv") for base in roots
+                            if (base / "ulinkconfig/csv/config_level.csv").is_file()), "")
+        template_path = next((str(base / "tile/Tile/Assets/Resources/TileMatchLevelData") for base in roots
+              if (base / "tile/Tile/Assets/Resources/TileMatchLevelData").is_dir()), "")
         demo_root = self.tool_root / "运行数据" / "示例"
         demos = sorted(path.name for path in demo_root.glob("*.csv")) if demo_root.is_dir() else []
         return {
@@ -479,8 +501,8 @@ class Application:
                 "engine": self.engine.describe(),
             },
             "paths": {
-                "config_path": {"value": str(DEFAULT_CONFIG_PATH) if config_exists else "", "ready": config_exists},
-                "template_path": {"value": str(DEFAULT_TEMPLATE_PATH) if template_exists else "", "ready": template_exists},
+                "config_path": {"value": config_path, "ready": bool(config_path)},
+                "template_path": {"value": template_path, "ready": bool(template_path)},
                 "history_ref": {"value": "historical", "ready": True},
                 "history": {
                     "path": "固定历史配置快照（本轮审计提交）",
@@ -922,6 +944,20 @@ class AnalysisRequestHandler(BaseHTTPRequestHandler):
             self._check_csrf()
             payload = self._read_json()
             path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
+            if path == "/api/dialog/directory":
+                result = choose_local_directory()
+                if result.get("error"):
+                    raise ApiError(400, result["error"], code="directory_picker")
+                self._send_json(200, result)
+                return
+            if path == "/api/settings/paths":
+                fields = ("template_path", "config_path")
+                values = {key: payload.get(key, "") for key in fields}
+                if any(not isinstance(value, str) or "\x00" in value or
+                       (value and not Path(value).is_absolute()) for value in values.values()):
+                    raise ApiError(400, "请选择本机目录的绝对路径。", code="invalid_settings")
+                self._send_json(200, path_audit(values, require_paths=False)["paths"])
+                return
             if path == "/api/preflight/player":
                 self._send_json(200, self.application.preflight_player(payload))
                 return

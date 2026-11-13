@@ -691,3 +691,13 @@ dialog::backdrop { background: rgba(25,36,27,.32); }
 .parameter-match-choice legend { padding: 0 4px; font-size: 14px; overflow-wrap: anywhere; }
 .parameter-match-choice .checkbox-label { display: inline-flex; align-items: center; min-height: 44px; gap: 8px; margin-right: 20px; overflow-wrap: anywhere; }
 .parameter-match-choice input { accent-color: var(--accent); }
+
+/* Local directory setup uses the tool's existing buttons and dialog colors. */
+.local-path-setup { width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 24px; border: 1px solid #d5dde3; border-radius: 16px; }
+.local-path-setup::backdrop { background: rgba(25, 35, 45, .36); }
+.local-path-setup h2 { margin: 0 0 8px; }
+.local-path-fields { display: grid; gap: 8px; margin-block: 18px; }
+.local-path-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.local-path-row > input { flex: 1; min-width: 0; width: 100%; padding: 10px; border: 1px solid #c4ced6; border-radius: 8px; }
+.local-path-row > button { flex: none; }
+.local-path-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; margin-top: 16px; }

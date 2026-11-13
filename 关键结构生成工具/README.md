@@ -7,6 +7,31 @@
 - 准备 macOS、Python 3.10 或以上和一个浏览器。推荐从 [Python 官网](https://www.python.org/downloads/macos/) 安装 Python，无需另装 Python 库。
 - 双击 `启动关键结构生成工具.command`，保持弹出的终端窗口开着。
 
+首次打开会提示确认本机的源模板和配置仓路径。可以选取目录，或点「稍后配置」直接上传模板。之后可在「设置」里修改。
+
+### 用终端安装 Python（已有 Homebrew）
+
+打开 Mac 的「终端」，依次粘贴下面的命令。最后一行应显示 `Python 3.13.x`。
+
+```zsh
+brew install python@3.13
+echo 'export PATH="$(brew --prefix python@3.13)/libexec/bin:$PATH"' >> ~/.zprofile
+source ~/.zprofile
+python3 --version
+```
+
+安装完成后，回到 Finder 重新双击启动器。如果提示 `brew: command not found`，可以到 [Python 官网](https://www.python.org/downloads/macos/) 下载 Python 3.13 的 macOS installer（`.pkg`），双击安装后新开终端，再用 `python3 --version` 确认版本。[Homebrew Python 3.13 说明](https://formulae.brew.sh/formula/python@3.13)
+
+### macOS 提示「Apple 无法验证」时
+
+确认启动器来自团队分享的 hhtools 仓库后，按以下步骤授权：
+
+1. 双击本工具的 `.command` 启动器。弹出警告后，点击「完成」。
+2. 打开「 → 系统设置 → 隐私与安全性」，向下滚动到「安全性」区域。
+3. 核对被拦截的文件名，点击「仍要打开」，按系统提示确认。如果没有看到按钮，重新双击同一个启动器，再回到此页面。
+
+每个工具的启动器按需分别授权。公司管理的 Mac 如果没有放行选项，请联系 IT。[Apple 官方操作说明](https://support.apple.com/zh-cn/102445)
+
 ## 设置本机目录
 
 打开「设置」，每项填写或选择后点对应的保存按钮。

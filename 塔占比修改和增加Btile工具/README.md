@@ -17,6 +17,31 @@
 
 用本机实际目录替换示例。按 ID 读取和同步时才需要对应模板库；只上传模板文件时可以先跳过。配置目录供「一键配置新参数」使用。
 
+首次打开会自动查找本机模板库。核对后点「确认使用」，或点「修改路径」进入设置，使用「选择目录」。也可以稍后配置并上传模板文件。
+
+### 用终端安装 Python（已有 Homebrew）
+
+打开 Mac 的「终端」，依次粘贴下面的命令。最后一行应显示 `Python 3.13.x`。
+
+```zsh
+brew install python@3.13
+echo 'export PATH="$(brew --prefix python@3.13)/libexec/bin:$PATH"' >> ~/.zprofile
+source ~/.zprofile
+python3 --version
+```
+
+安装完成后，回到 Finder 重新双击启动器。如果提示 `brew: command not found`，可以到 [Python 官网](https://www.python.org/downloads/macos/) 下载 Python 3.13 的 macOS installer（`.pkg`），双击安装后新开终端，再用 `python3 --version` 确认版本。[Homebrew Python 3.13 说明](https://formulae.brew.sh/formula/python@3.13)
+
+### macOS 提示「Apple 无法验证」时
+
+确认启动器来自团队分享的 hhtools 仓库后，按以下步骤授权：
+
+1. 双击本工具的 `.command` 启动器。弹出警告后，点击「完成」。
+2. 打开「 → 系统设置 → 隐私与安全性」，向下滚动到「安全性」区域。
+3. 核对被拦截的文件名，点击「仍要打开」，按系统提示确认。如果没有看到按钮，重新双击同一个启动器，再回到此页面。
+
+每个工具的启动器按需分别授权。公司管理的 Mac 如果没有放行选项，请联系 IT。[Apple 官方操作说明](https://support.apple.com/zh-cn/102445)
+
 ## 基本操作
 
 1. 上传 `_m.bytes` 文件，或选读取来源并按行粘贴模板 ID。

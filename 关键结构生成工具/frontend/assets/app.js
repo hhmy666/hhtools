@@ -7571,10 +7571,70 @@
     $("#write-calibration-config").addEventListener("click", writeConsumptionCalibrationConfig);
   }
 
+  function showLocalPathSetup(payload) {
+    const dialog = $("#local-path-setup");
+    if (!payload.path_candidates || sessionStorage.getItem("structure.pathsDeferred")) return;
+    const profile = state.profile?.profile || {};
+    if (profile.template_dir && state.profile.template_dir?.exists) return;
+    $("#setup-template").value = payload.path_candidates.template || "";
+    $("#setup-config").value = profile.ulinkconfig_root || payload.path_candidates.config || "";
+    const notice = $("#local-path-feedback");
+    $("#local-path-confirm").onclick = async () => {
+      const template = $("#setup-template").value.trim();
+      const config = $("#setup-config").value.trim();
+      const button = $("#local-path-confirm");
+      if (!template.startsWith("/") || (config && !config.startsWith("/"))) {
+        notice.textContent = "请选择源模板目录，配置仓可以稍后设置。";
+        notice.hidden = false;
+        return;
+      }
+      button.disabled = true;
+      try {
+        if (config && config !== profile.ulinkconfig_root) {
+          await saveProfilePart("ulinkconfig", { ulinkconfig_root: config });
+        }
+        await saveProfilePart("source", { tile_repo_root: template, template_dir: template });
+        dialog.close();
+      } catch (error) {
+        notice.textContent = error.message;
+        notice.hidden = false;
+      } finally {
+        button.disabled = false;
+      }
+    };
+    const defer = () => sessionStorage.setItem("structure.pathsDeferred", "1");
+    $("#local-path-skip").onclick = () => { defer(); dialog.close(); };
+    dialog.addEventListener("cancel", defer, { once: true });
+    dialog.showModal();
+  }
+
   async function bootstrap() {
     initStaticControls(); bindEvents(); syncPlanForm(state.batchPlan); setFlow(1); updateImportActionState(); updateParameterResolveState(); updateCalibrationResolveState();
+    document.querySelectorAll("[data-pick-path]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const input = document.getElementById(button.dataset.pickPath);
+      const feedback = button.closest("dialog")?.querySelector("[role=status]");
+      button.disabled = true;
+      if (feedback) feedback.hidden = true;
+      try {
+        const payload = await api("/dialog/directory", { method: "POST", body: {} });
+        if (payload.path) {
+          input.value = payload.path;
+        }
+      } catch (error) {
+        if (feedback) {
+          feedback.textContent = error.message;
+          feedback.hidden = false;
+        } else {
+          toast(error.message, "error");
+        }
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
     try {
-      const payload = await api("/bootstrap"); state.csrf = payload.csrf_token; state.profile = payload.profile_status; state.strategies = payload.strategies || {}; renderProfile(); renderStrategies();
+      const payload = await api("/bootstrap"); state.csrf = payload.csrf_token; state.profile = payload.profile_status; state.strategies = payload.strategies || {}; renderProfile(); renderStrategies(); showLocalPathSetup(payload);
       const recoverableExport = (payload.exports || []).find((record) => (
         record?.status === "completed"
         && record?.export_id

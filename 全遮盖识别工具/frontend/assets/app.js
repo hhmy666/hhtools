@@ -22,6 +22,60 @@
    $(id).value=saved??(defaultValue(context)||'');
   }
  }
+  document.querySelectorAll("[data-pick-path]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const input = document.getElementById(button.dataset.pickPath);
+      const pickerStatus = button.closest("dialog")?.querySelector("[role=status]");
+      button.disabled = true;
+      if (pickerStatus) pickerStatus.hidden = true;
+      try {
+        const payload = await request("/api/dialog/directory",{method:"POST",body:"{}"});
+        if (payload.path) {
+          input.value = payload.path;
+          input.dispatchEvent(new Event("change"));
+        }
+      } catch (error) {
+        if (pickerStatus) {
+          pickerStatus.textContent = error.message;
+          pickerStatus.hidden = false;
+        } else {
+          feedback(error.message);
+        }
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+ function showLocalPathSetup(){
+  const dialog=$('local-path-setup');
+  if(typeof dialog.showModal!=='function'||!context.path_candidates)return;
+  try{if(window.localStorage.getItem('covercheck.path-confirmed')||sessionStorage.getItem('covercheck.path-deferred'))return;}catch(_){}
+  $('setup-template').value=$('template-root').value||context.path_candidates.template_root||'';
+  $('setup-tile').value=$('sync-tile-directory').value||context.path_candidates.tile_dir||'';
+  $('local-path-confirm').onclick=async()=>{
+   const template=$('setup-template').value.trim(), tile=$('setup-tile').value.trim();
+   const status=$('local-path-feedback');
+   if(!template&&!tile || [template,tile].some(path=>path&&!path.startsWith('/'))){
+    status.textContent='请选择至少一个目录，或点击「稍后配置」。';status.hidden=false;return;
+   }
+   const button=$('local-path-confirm');
+   button.disabled=true;status.hidden=true;
+   try{
+    await request('/api/settings/paths',{method:'POST',body:JSON.stringify({template,tile})});
+    for(const [id,value] of [['template-root',template],['sync-template-directory',template],['sync-tile-directory',tile]]){
+     $(id).value=value;
+     $(id).dispatchEvent(new Event('change'));
+    }
+    try{window.localStorage.setItem('covercheck.path-confirmed','1');}catch(_){}
+    dialog.close();
+   }catch(error){status.textContent=error.message;status.hidden=false;}
+   finally{button.disabled=false;}
+  };
+  const defer=()=>{try{sessionStorage.setItem('covercheck.path-deferred','1');}catch(_){}};
+  $('local-path-skip').onclick=()=>{defer();dialog.close();};
+  dialog.addEventListener('cancel',defer,{once:true});
+  dialog.showModal();
+ }
  const taskUrl=()=>'/api/tasks/'+encodeURIComponent(task.task_id);
  const unfinished=()=>task?.status==='running'||activity?.status==='running';
  const locked=()=>pending||unfinished();
@@ -161,6 +215,6 @@
  $('select-all-changed').addEventListener('click',()=>{if(locked()||!task)return;task.rows.forEach((row,i)=>{if(row.edited&&row.status!=='error')selectedRows.add(i);});rememberSelection();});$('clear-selection').addEventListener('click',()=>{if(locked())return;selectedRows.clear();rememberSelection();});
  const home=()=>showScreen(screen);$('home').addEventListener('click',home);$('workspace').addEventListener('click',home);$('settings').addEventListener('click',()=>{if(locked())return;showScreen('import',false);switchMode('ids');$('template-root').scrollIntoView({block:'center'});$('template-root').focus();});
  $('reset').addEventListener('click',()=>{if(locked())return;task=null;activity=null;selectedRows.clear();files=[];query='';filter='all';page=1;$('search').value='';$('filter').value='all';$('template-ids').value='';$('results').hidden=true;$('progress-region').hidden=true;$('operation-progress-region').hidden=true;$('download-zip').hidden=true;sessionStorage.removeItem('covercheck-task');feedback('');renderFiles();showScreen('import');});
- async function initialize(){showScreen('import',false);try{context=await request('/api/context');restorePaths();$('service').textContent='本地服务已连接';$('service').classList.add('is-online');renderControls();const saved=sessionStorage.getItem('covercheck-task');if(saved){try{task=await request('/api/tasks/'+encodeURIComponent(saved));try{for(const i of JSON.parse(sessionStorage.getItem('covercheck-selection:'+task.task_id)||'[]'))if(Number.isInteger(i))selectedRows.add(i);}catch(_){}render();if(task.status==='running')await resume();else if(task.rows?.length){showScreen('results',false);$('results-title').textContent='上次评估结果';if(task.operation){pending=true;try{await continueOperation(task.operation,task.operation.status==='running',false);}catch(error){await showTaskError(error,null,resumeOperation);}finally{pending=false;render();}}}}catch(_){sessionStorage.removeItem('covercheck-task');task=null;}}}catch(error){$('service').textContent='本地服务未连接';$('service').classList.add('is-offline');feedback(error.message+' 请通过启动器重新打开工具。');}}
+ async function initialize(){showScreen('import',false);try{context=await request('/api/context');restorePaths();$('service').textContent='本地服务已连接';$('service').classList.add('is-online');renderControls();showLocalPathSetup();const saved=sessionStorage.getItem('covercheck-task');if(saved){try{task=await request('/api/tasks/'+encodeURIComponent(saved));try{for(const i of JSON.parse(sessionStorage.getItem('covercheck-selection:'+task.task_id)||'[]'))if(Number.isInteger(i))selectedRows.add(i);}catch(_){}render();if(task.status==='running')await resume();else if(task.rows?.length){showScreen('results',false);$('results-title').textContent='上次评估结果';if(task.operation){pending=true;try{await continueOperation(task.operation,task.operation.status==='running',false);}catch(error){await showTaskError(error,null,resumeOperation);}finally{pending=false;render();}}}}catch(_){sessionStorage.removeItem('covercheck-task');task=null;}}}catch(error){$('service').textContent='本地服务未连接';$('service').classList.add('is-offline');feedback(error.message+' 请通过启动器重新打开工具。');}}
  initialize();
 })();

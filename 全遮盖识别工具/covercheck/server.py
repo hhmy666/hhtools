@@ -15,6 +15,8 @@ import mimetypes
 import os
 from pathlib import Path
 import re
+import subprocess
+import sys
 import secrets
 import threading
 import unicodedata
@@ -26,7 +28,7 @@ from .repair import validate_board as _validate_import
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8877
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 SERVICE_ID = "tile-family.full-cover-checker"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 INSTANCE_ID = hashlib.sha256(str(PROJECT_ROOT).encode("utf-8")).hexdigest()[:24]
@@ -39,6 +41,23 @@ MAX_SAVED_TASKS = 10
 MAX_SAVED_EXPORTS = 3
 MAX_EDIT_TILES = 20000
 _ID_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,159}\Z")
+
+
+def choose_local_directory():
+    if sys.platform != "darwin":
+        return {"error": "当前系统不支持目录选择，请手动输入路径。"}
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", 'POSIX path of (choose folder with prompt "选择本机目录")'],
+            capture_output=True, text=True, timeout=90, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"error": "目录选择未完成，请重试或手动输入。"}
+    if result.returncode:
+        if "(-128)" in result.stderr:
+            return {"cancelled": True}
+        return {"error": "无法打开系统目录选择器，请手动输入。"}
+    return {"path": result.stdout.rstrip("\n").rstrip("/") or "/"}
 
 
 class ApiError(Exception):
@@ -172,11 +191,18 @@ class Application:
         self.active_id = None
 
     def context(self):
+        home = Path.home()
+        roots = (home, home / "Projects", home / "Documents", home / "Desktop")
+        template = next((str(base / "tileleveltemplate/Template") for base in roots
+              if (base / "tileleveltemplate/Template").is_dir()), "")
+        tile = next((str(base / "tile/Tile/Assets/Resources/TileMatchLevelData") for base in roots
+              if (base / "tile/Tile/Assets/Resources/TileMatchLevelData").is_dir()), "")
         return {"version": VERSION, "service_id": SERVICE_ID, "instance_id": INSTANCE_ID,
                 "template_root": str(self.template_root or ""),
                 "template_root_exists": bool(self.template_root and self.template_root.is_dir()),
                 "output_dir": str(DEFAULT_OUTPUT_ROOT), "template_dir": str(self.template_root or ""),
                 "tile_dir": "",
+                "path_candidates": {"template_root": template, "tile_dir": tile},
                 "csrf_token": self.csrf_token,
                 "limits": {"files": MAX_FILES, "file_bytes": MAX_FILE_BYTES,
                            "body_bytes": MAX_BODY_BYTES, "active_tasks": 1}}
@@ -920,6 +946,24 @@ class RequestHandler(BaseHTTPRequestHandler):
             return
         if method == "GET" and path == "/api/context":
             self._json(200, self.app.context())
+            return
+        if path == "/api/settings/paths" and method == "POST":
+            values = self._body()
+            if not isinstance(values, dict):
+                raise ApiError(400, "invalid_request", "需要提供目录设置")
+            for value in (values.get("template", ""), values.get("tile", "")):
+                if value:
+                    if not isinstance(value, str) or not Path(value).is_absolute():
+                        raise ApiError(400, "invalid_root", "请选择本机目录的绝对路径")
+                    _existing_root(value)
+            self._json(200, {"ok": True})
+            return
+        if path == "/api/dialog/directory" and method == "POST":
+            self._body()
+            result = choose_local_directory()
+            if result.get("error"):
+                raise ApiError(400, "directory_picker", result["error"])
+            self._json(200, result)
             return
         if path == "/api/tasks" and method == "POST":
             self._json(202, {"task_id": self.app.submit(self._body())})

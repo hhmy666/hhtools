@@ -2720,7 +2720,7 @@ class AppServerTests(unittest.TestCase):
         with urllib.request.urlopen(f"{self.base}/api/v1/bootstrap") as response:
             payload = json.load(response)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["app_version"], "0.2.0")
+        self.assertEqual(payload["app_version"], "0.2.1")
         self.assertTrue(payload["csrf_token"])
         self.assertIn("profile_status", payload)
 

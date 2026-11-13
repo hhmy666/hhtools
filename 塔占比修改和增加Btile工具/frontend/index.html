@@ -338,17 +338,17 @@
             <div class="card-heading"><h2 class="card-title">模板库路径</h2><span class="status-pill neutral" id="settings-binding-status">等待读取</span></div>
             <div class="field">
               <label for="settings-tile-path">Tile 仓路径</label>
-              <input id="settings-tile-path" placeholder="/Users/你的用户名/Projects/tile/Tile/Assets/Resources/TileMatchLevelData" name="tile_root" type="text" aria-describedby="settings-tile-help">
+              <div class="local-path-row"><input id="settings-tile-path" placeholder="/Users/你的用户名/Projects/tile/Tile/Assets/Resources/TileMatchLevelData" name="tile_root" type="text" aria-describedby="settings-tile-help"><button type="button" class="secondary-button" data-pick-path="settings-tile-path">选择目录</button></div>
               <p id="settings-tile-help">应以 tile/Tile/Assets/Resources/TileMatchLevelData 结尾。</p>
             </div>
             <div class="field">
               <label for="settings-template-path">模板仓路径</label>
-              <input id="settings-template-path" placeholder="/Users/你的用户名/Projects/tileleveltemplate/Template" name="template_root" type="text" aria-describedby="settings-template-help">
+              <div class="local-path-row"><input id="settings-template-path" placeholder="/Users/你的用户名/Projects/tileleveltemplate/Template" name="template_root" type="text" aria-describedby="settings-template-help"><button type="button" class="secondary-button" data-pick-path="settings-template-path">选择目录</button></div>
               <p id="settings-template-help">应以 tileleveltemplate/Template 结尾。</p>
             </div>
             <div class="field">
               <label for="settings-config-root">配置仓库 / CSV 目录</label>
-              <input id="settings-config-root" placeholder="/Users/你的用户名/Projects/ulinkconfig/csv" name="config_root" type="text" aria-describedby="settings-config-help">
+              <div class="local-path-row"><input id="settings-config-root" placeholder="/Users/你的用户名/Projects/ulinkconfig/csv" name="config_root" type="text" aria-describedby="settings-config-help"><button type="button" class="secondary-button" data-pick-path="settings-config-root">选择目录</button></div>
               <p id="settings-config-help">用于一键配置新参数，包含 config_level.csv 与 config_level_list.csv。</p>
             </div>
             <button class="secondary-button" id="rediscover-button" type="button">重新发现路径</button>
@@ -367,7 +367,7 @@
             </div>
             <div class="field">
               <label for="settings-export-directory">默认导出目录</label>
-              <input id="settings-export-directory" name="output_root" type="text" aria-describedby="settings-export-help">
+              <div class="local-path-row"><input id="settings-export-directory" name="output_root" type="text" aria-describedby="settings-export-help"><button type="button" class="secondary-button" data-pick-path="settings-export-directory">选择目录</button></div>
               <p id="settings-export-help">用于每次任务的初始值，第三步仍可临时修改。</p>
             </div>
             <fieldset class="sync-targets default-sync-targets" aria-describedby="default-sync-help">
@@ -413,11 +413,11 @@
 
   <dialog id="binding-dialog" aria-labelledby="binding-dialog-title" aria-describedby="binding-dialog-description">
     <div class="dialog-header"><div><p class="section-kicker">首次使用</p><h2 id="binding-dialog-title">确认模板库路径</h2></div></div>
-    <p id="binding-dialog-description">工具已根据固定目录后缀自动发现路径。如果找到多个候选，请先选择当前项目；不确定时进入设置修改。</p>
+    <p id="binding-dialog-description">工具已根据固定目录后缀自动发现路径。请确认当前项目的候选路径，或点「修改路径」选择目录。也可以稍后配置并直接上传模板文件。</p>
     <div class="candidate-notice" id="path-discovery-notice" role="status" hidden></div>
     <div class="candidate-list" id="path-candidate-list" aria-label="模板库路径候选"></div>
     <dl class="path-list dialog-paths"><div><dt>模板仓</dt><dd id="binding-template-path">等待发现</dd></div><div><dt>Tile 仓</dt><dd id="binding-tile-path">等待发现</dd></div></dl>
-    <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog="binding-dialog" data-route="settings">修改路径</button><button class="primary-button" id="confirm-bindings-button" type="button">确认使用</button></div>
+    <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog="binding-dialog" data-route="settings">修改路径</button><button class="secondary-button" id="skip-bindings" type="button">稍后配置</button><button class="primary-button" id="confirm-bindings-button" type="button">确认使用</button></div>
   </dialog>
 
   <dialog class="help-dialog" id="help-dialog" aria-labelledby="help-dialog-title" aria-describedby="help-dialog-description">

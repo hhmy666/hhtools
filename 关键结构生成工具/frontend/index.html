@@ -729,5 +729,18 @@
         </div>
       </div>
     </dialog>
-  </body>
+    <dialog id="local-path-setup" class="local-path-setup" aria-labelledby="local-path-title">
+    <h2 id="local-path-title">确认本机路径</h2>
+    <p>已查找本机常见项目目录。请确认源模板目录，也可以稍后配置并直接上传模板。使用参数功能时再配置 ulinkconfig。</p>
+    <div class="local-path-fields">
+      <label for="setup-template">源模板目录</label><div class="local-path-row"><input id="setup-template" type="text" spellcheck="false" autocomplete="off" placeholder="未找到，请选择目录"><button type="button" class="secondary-button" data-pick-path="setup-template">选择目录</button></div>
+      <label for="setup-config">ulinkconfig 配置仓库（可选）</label><div class="local-path-row"><input id="setup-config" type="text" spellcheck="false" autocomplete="off" placeholder="未找到，请选择目录"><button type="button" class="secondary-button" data-pick-path="setup-config">选择目录</button></div>
+    </div>
+    <p id="local-path-feedback" role="status" hidden></p>
+    <div class="local-path-actions">
+      <button type="button" class="secondary-button" id="local-path-skip">稍后配置</button>
+      <button type="button" class="primary-button" id="local-path-confirm">确认使用</button>
+    </div>
+  </dialog>
+</body>
 </html>

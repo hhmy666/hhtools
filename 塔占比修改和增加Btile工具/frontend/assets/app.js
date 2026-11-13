@@ -570,7 +570,7 @@ function renderPathDiscovery(settings) {
     ["tile", "Tile 仓", settings.candidates.tile, settings.tileRoot],
   ];
   byId("path-candidate-list").innerHTML = definitions.map(([kind, label, candidates, current]) => {
-    if (!candidates.length) return `<fieldset><legend>${label}</legend><p class="empty-copy">未自动发现，请在设置中填写。</p></fieldset>`;
+    if (!candidates.length) return `<fieldset><legend>${label}</legend><p class="empty-copy">未自动发现，请在设置中选择目录。</p></fieldset>`;
     return `<fieldset><legend>${label}${candidates.length > 1 ? ` · ${candidates.length} 个候选` : ""}</legend>${candidates.map((path, index) => {
       const checked = path === current || (!current && candidates.length === 1 && index === 0);
       return `<label><input type="radio" name="${kind}_candidate" value="${escapeHTML(path)}" ${checked ? "checked" : ""}><span>${escapeHTML(path)}</span></label>`;
@@ -589,7 +589,7 @@ async function loadSettings(showBinding = true) {
     if (state.settings.loadError) {
       showToast("设置文件读取失败，需要在保存时选择恢复。", "error");
     }
-    if (showBinding && !(state.settings.tileConfirmed && state.settings.templateConfirmed)) {
+    if (showBinding && !sessionStorage.getItem("tower.pathsDeferred") && !(state.settings.tileConfirmed || state.settings.templateConfirmed)) {
       openDialog(byId("binding-dialog"));
     }
   } catch (error) {
@@ -3010,8 +3010,8 @@ async function saveSettings(event) {
   const exportRoot = byId("settings-export-directory").value.trim();
   const namingRule = byId("settings-naming-rule").value.trim();
   const increaseNamingRule = byId("settings-increase-naming-rule").value.trim();
-  if (!tileRoot.endsWith(TILE_PATH_SUFFIX)) setInvalid(byId("settings-tile-path"));
-  if (!templateRoot.endsWith(TEMPLATE_PATH_SUFFIX)) setInvalid(byId("settings-template-path"));
+  if (tileRoot && !tileRoot.endsWith(TILE_PATH_SUFFIX)) setInvalid(byId("settings-tile-path"));
+  if (templateRoot && !templateRoot.endsWith(TEMPLATE_PATH_SUFFIX)) setInvalid(byId("settings-template-path"));
   if (!exportRoot) setInvalid(byId("settings-export-directory"));
   const namingValidation = validateNamingControl(byId("settings-naming-rule"), []);
   const increaseNamingValidation = validateNamingControl(byId("settings-increase-naming-rule"), []);
@@ -3030,8 +3030,8 @@ async function saveSettings(event) {
       naming_rule: namingRule,
       increase_naming_rule: increaseNamingRule,
       default_sync_targets: all("input[name='default_sync_targets']:checked").map(input => input.value),
-      tile_confirmed: true,
-      template_confirmed: true,
+      tile_confirmed: Boolean(tileRoot),
+      template_confirmed: Boolean(templateRoot),
     };
     if (state.settings.loadError) body.recover = true;
     state.settings = normalizeSettings(await apiRequest("/api/settings", {method: "PUT", json: body}));
@@ -3046,7 +3046,7 @@ async function saveSettings(event) {
 async function confirmBindings() {
   const tileRoot = candidateChoice("tile") || VM.resolveCandidate(state.settings.candidates.tile, state.settings.tileRoot);
   const templateRoot = candidateChoice("template") || VM.resolveCandidate(state.settings.candidates.template, state.settings.templateRoot);
-  if (!tileRoot || !templateRoot) {
+  if (!tileRoot && !templateRoot) {
     closeDialog(byId("binding-dialog"));
     routeTo("settings");
     showToast("未发现完整模板库路径，请手动绑定。", "error");
@@ -3055,7 +3055,7 @@ async function confirmBindings() {
   try {
     state.settings = normalizeSettings(await apiRequest("/api/settings", {
       method: "PUT",
-      json: {tile_root: tileRoot, template_root: templateRoot, tile_confirmed: true, template_confirmed: true},
+      json: {tile_root: tileRoot, template_root: templateRoot, tile_confirmed: Boolean(tileRoot), template_confirmed: Boolean(templateRoot)},
     }));
     populatePaths(state.settings, true);
     closeDialog(byId("binding-dialog"));
@@ -3248,6 +3248,10 @@ function bindEvents() {
     else openDialog(byId("restart-dialog"));
   });
   byId("confirm-restart-button").addEventListener("click", restartWorkspace);
+  byId("skip-bindings")?.addEventListener("click", () => {
+    sessionStorage.setItem("tower.pathsDeferred", "1");
+    closeDialog(byId("binding-dialog"));
+  });
   byId("confirm-bindings-button").addEventListener("click", confirmBindings);
   byId("rediscover-button").addEventListener("click", rediscoverPaths);
   byId("template-files").addEventListener("change", (event) => {
@@ -3270,6 +3274,29 @@ function bindEvents() {
   });
   byId("import-form").addEventListener("submit", importTemplates);
   byId("configuration-form").addEventListener("submit", createJob);
+  document.querySelectorAll("[data-pick-path]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const input = document.getElementById(button.dataset.pickPath);
+      const feedback = button.closest("dialog")?.querySelector("[role=status]");
+      button.disabled = true;
+      if (feedback) feedback.hidden = true;
+      try {
+        const payload = await apiRequest("/api/dialog/directory", { method: "POST", json: {} });
+        if (payload.path) {
+          input.value = payload.path;
+        }
+      } catch (error) {
+        if (feedback) {
+          feedback.textContent = error.message;
+          feedback.hidden = false;
+        } else {
+          showToast(error.message, "error");
+        }
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
   byId("settings-form").addEventListener("submit", saveSettings);
   byId("export-form").addEventListener("submit", previewExport);
   byId("export-naming-rule").addEventListener("input", () => { byId("export-naming-rule").dataset.edited = "true";invalidatePlans("命名规则已变更"); updateNamingRegenerationControl(); });

@@ -229,7 +229,7 @@
     const node = $(target);
     const dot = $(".state-dot", node);
     const text = $("span:last-child", node);
-    const exists = typeof data === "object" ? data.exists ?? data.ready ?? data.ok : Boolean(data);
+    const exists = typeof data === "object" ? data.status ? data.status === "ready" : data.exists ?? data.ready ?? data.ok : Boolean(data);
     const display = typeof data === "object" ? data.path || data.value || data.message : fallback;
     dot.className = `state-dot ${exists ? "ok" : data ? "warning" : "error"}`;
     text.textContent = display || fallback || "请到设置填写";
@@ -1346,6 +1346,56 @@
     }
   }
 
+  async function refreshLocalPaths() {
+    try {
+      const paths = await api("/api/settings/paths", {
+        method: "POST", body: JSON.stringify(state.settings)
+      });
+      updatePathStatus(paths);
+      return paths;
+    } catch {
+      updatePathStatus({});
+      return null;
+    }
+  }
+
+  function showLocalPathSetup() {
+    const dialog = $("#local-path-setup");
+    if (localStorage.getItem("playerBehavior.pathsConfirmed") ||
+        sessionStorage.getItem("playerBehavior.pathsDeferred")) return;
+    const notice = $("#local-path-feedback");
+    $("#setup-template").value = state.settings.template_path;
+    $("#setup-config").value = state.settings.config_path;
+    $("#local-path-confirm").onclick = async () => {
+      const paths = { template_path: $("#setup-template").value.trim(),
+                      config_path: $("#setup-config").value.trim() };
+      const button = $("#local-path-confirm");
+      button.disabled = true;
+      try {
+        const statuses = await api("/api/settings/paths", { method: "POST", body: JSON.stringify(paths) });
+        if (statuses.template_path?.status !== "ready" || statuses.config_path?.status !== "ready") {
+          notice.textContent = "请选择两个可读取的目录，或点击「稍后配置」。";
+          notice.hidden = false;
+          return;
+        }
+        applySettings({ ...state.settings, ...paths });
+        localStorage.setItem("playerBehavior.settings", JSON.stringify(state.settings));
+        localStorage.setItem("playerBehavior.pathsConfirmed", "1");
+        updatePathStatus(statuses);
+        dialog.close();
+      } catch (error) {
+        notice.textContent = error.message;
+        notice.hidden = false;
+      } finally {
+        button.disabled = false;
+      }
+    };
+    const defer = () => sessionStorage.setItem("playerBehavior.pathsDeferred", "1");
+    $("#local-path-skip").onclick = () => { defer(); dialog.close(); };
+    dialog.addEventListener("cancel", defer, { once: true });
+    dialog.showModal();
+  }
+
   async function loadBootstrap() {
     setServiceStatus("checking", "正在连接本地服务");
     try {
@@ -1362,6 +1412,8 @@
       updateInputAvailability("online");
       restoreResultSnapshot("player");
       restoreResultSnapshot("online");
+      if (saved) await refreshLocalPaths();
+      showLocalPathSetup();
       await restoreCurrentJobs();
       if (data.demo === true && data.demo_data) hydrateServerDemo(data.demo_data);
     } catch (error) {
@@ -1491,17 +1543,46 @@
       }
     });
 
-    $("#save-settings").addEventListener("click", () => {
+  document.querySelectorAll("[data-pick-path]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const input = document.getElementById(button.dataset.pickPath);
+      const feedback = button.closest("dialog")?.querySelector("[role=status]");
+      button.disabled = true;
+      if (feedback) feedback.hidden = true;
+      try {
+        const payload = await api("/api/dialog/directory", { method: "POST", body: "{}" });
+        if (payload.path) {
+          input.value = payload.path;
+        }
+      } catch (error) {
+        if (feedback) {
+          feedback.textContent = error.message;
+          feedback.hidden = false;
+        } else {
+          toast(error.message, "error");
+        }
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+    $("#save-settings").addEventListener("click", async () => {
       state.settings = currentSettings();
       localStorage.setItem("playerBehavior.settings", JSON.stringify(state.settings));
-      updatePathStatus({});
-      toast("路径已保存在本浏览器；下次预检会由本地服务验证。 ");
+      const paths = await refreshLocalPaths();
+      if (paths?.template_path?.status === "ready" && paths?.config_path?.status === "ready") {
+        localStorage.setItem("playerBehavior.pathsConfirmed", "1");
+      } else {
+        localStorage.removeItem("playerBehavior.pathsConfirmed");
+      }
+      toast("路径已保存在本浏览器。");
       route("workspace");
     });
     $("#reset-paths").addEventListener("click", () => {
-      applySettings(DEFAULT_PATHS);
+      applySettings(state.bootstrap?.paths || DEFAULT_PATHS);
       localStorage.removeItem("playerBehavior.settings");
-      updatePathStatus({});
+      localStorage.removeItem("playerBehavior.pathsConfirmed");
+      updatePathStatus(state.bootstrap?.paths || {});
     });
 
     const helpDialog = $("#help-dialog");

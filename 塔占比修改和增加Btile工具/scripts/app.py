@@ -13,6 +13,8 @@ import json
 import mimetypes
 from pathlib import Path
 import re
+import subprocess
+import sys
 import secrets
 import urllib.parse
 import webbrowser
@@ -20,10 +22,27 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional, Tuple
 
 
+def choose_local_directory():
+    if sys.platform != "darwin":
+        return {"error": "当前系统不支持目录选择，请手动输入路径。"}
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", 'POSIX path of (choose folder with prompt "选择本机目录")'],
+            capture_output=True, text=True, timeout=90, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"error": "目录选择未完成，请重试或手动输入。"}
+    if result.returncode:
+        if "(-128)" in result.stderr:
+            return {"cancelled": True}
+        return {"error": "无法打开系统目录选择器，请手动输入。"}
+    return {"path": result.stdout.rstrip("\n").rstrip("/") or "/"}
+
+
 TOOL_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_ROOT = TOOL_ROOT / "frontend"
 SERVICE_ID = "tile-family.tower-ratio-reducer-tool"
-APP_VERSION = "0.9.2"
+APP_VERSION = "0.9.3"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8766
 LAST_PORT = 8775
@@ -153,6 +172,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             return 200, app.get_settings(), {}
         if path == "/api/settings" and method == "PUT":
             return 200, app.update_settings(self._read_json()), {}
+        if path == "/api/dialog/directory" and method == "POST":
+            self._read_json()
+            result = choose_local_directory()
+            if result.get("error"):
+                raise ApiError(400, "directory_picker", result["error"])
+            return 200, result, {}
         if path == "/api/import" and method == "POST":
             return 200, app.import_files(self._read_multipart()), {}
         if path == "/api/import-ids" and method == "POST":

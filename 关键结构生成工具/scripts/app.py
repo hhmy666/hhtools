@@ -110,7 +110,20 @@ from services.ui_service import (  # noqa: E402
 
 
 MAX_JSON_BODY = 96 * 1024 * 1024
-APP_VERSION = "0.2.0"
+def local_path_candidates():
+    home = Path.home()
+    roots = (home, home / "Projects", home / "Documents", home / "Desktop")
+    template = next(
+        (str(base / suffix) for suffix in (
+            "tile/Tile/Assets/Resources/TileMatchLevelData", "tileleveltemplate/Template"
+        ) for base in roots if (base / suffix).is_dir()), ""
+    )
+    config = next((str(base / "ulinkconfig") for base in roots
+                   if (base / "ulinkconfig/csv/config_level.csv").is_file()), "")
+    return {"template": template, "config": config}
+
+
+APP_VERSION = "0.2.1"
 MAX_BATCH_SEED = (1 << 64) - 1
 MAX_TIMELINE_EVENTS = 100
 MAX_SEARCH_BUDGET_MULTIPLIER = 16
@@ -4232,6 +4245,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                         "ok": True,
                         "app_version": APP_VERSION,
                         "csrf_token": self.app.csrf_token,
+                        "path_candidates": local_path_candidates(),
                         "profile_status": self.app.profile_status(),
                         "jobs": self.app.history(),
                         "exports": self.app.export_history(),

@@ -2195,9 +2195,11 @@ class Application:
     def get_settings(self):
         settings = load_settings(self.settings_path)
         if not settings.config_root:
-            candidate = self.discovery_root / 'ulinkconfig' / 'csv'
-            if (candidate / 'config_level.csv').is_file():
-                settings.config_root = str(candidate)
+            for base in (self.discovery_root, *(self.discovery_root / name for name in ("Projects", "Documents", "Desktop"))):
+                candidate = base / "ulinkconfig" / "csv"
+                if (candidate / "config_level.csv").is_file():
+                    settings.config_root = str(candidate)
+                    break
         discovery = discover_template_roots(self.discovery_root, 8, time.monotonic() + 1.0)
         return {"settings": self._settings_dict(settings),
                 "load_error": bool(settings.load_error),

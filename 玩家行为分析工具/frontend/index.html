@@ -336,8 +336,8 @@
           <div class="settings-layout">
             <article class="card settings-card">
               <header class="card-heading"><div><span class="section-kicker">仓库路径</span><h3>数据依赖</h3></div></header>
-              <label class="setting-field"><span>关卡模板目录</span><input id="template-path" placeholder="/Users/你的用户名/Projects/tile/Tile/Assets/Resources/TileMatchLevelData" type="text" spellcheck="false" autocomplete="off" /><small>填写包含 _m.bytes 的 TileMatchLevelData 目录。</small></label>
-              <label class="setting-field"><span>配置仓库或 CSV 目录</span><input id="config-path" placeholder="/Users/你的用户名/Projects/ulinkconfig/csv" type="text" spellcheck="false" autocomplete="off" /><small>用于关卡、Tile、DDA 与资产映射。</small></label>
+              <div class="setting-field"><label for="template-path">关卡模板目录</label><div class="local-path-row"><input id="template-path" placeholder="/Users/你的用户名/Projects/tile/Tile/Assets/Resources/TileMatchLevelData" type="text" spellcheck="false" autocomplete="off" /><button type="button" class="secondary-button" data-pick-path="template-path">选择目录</button></div><small>填写包含 _m.bytes 的 TileMatchLevelData 目录。</small></div>
+              <div class="setting-field"><label for="config-path">配置仓库或 CSV 目录</label><div class="local-path-row"><input id="config-path" placeholder="/Users/你的用户名/Projects/ulinkconfig/csv" type="text" spellcheck="false" autocomplete="off" /><button type="button" class="secondary-button" data-pick-path="config-path">选择目录</button></div><small>用于关卡、Tile、DDA 与资产映射。</small></div>
               <label class="setting-field"><span>配置快照口径</span><select id="history-ref"><option value="historical">历史固定快照（推荐）</option><option value="current">当前仓库检出版本</option></select><small>historical 使用已审计固定提交 4eac5d… / 5022d0…；只有明确分析当前配置时才选择 current。</small></label>
               <div class="action-row"><button class="secondary-button" id="reset-paths" type="button">恢复默认路径</button><button class="primary-button" id="save-settings" type="button">保存设置</button></div>
             </article>
@@ -373,5 +373,18 @@
         <div class="confirm-actions"><button class="secondary-button" value="cancel">取消</button><button class="danger-button" id="confirm-restart" value="confirm">清空当前流程</button></div>
       </form>
     </dialog>
-  </body>
+    <dialog id="local-path-setup" class="local-path-setup" aria-labelledby="local-path-title">
+    <h2 id="local-path-title">确认本机路径</h2>
+    <p>已查找当前用户主目录下常见的模板和配置仓。请确认实际目录。可以稍后配置，分析前会检查这些依赖。</p>
+    <div class="local-path-fields">
+      <label for="setup-template">关卡模板目录</label><div class="local-path-row"><input id="setup-template" type="text" spellcheck="false" autocomplete="off" placeholder="未找到，请选择目录"><button type="button" class="secondary-button" data-pick-path="setup-template">选择目录</button></div>
+      <label for="setup-config">配置仓库或 CSV 目录</label><div class="local-path-row"><input id="setup-config" type="text" spellcheck="false" autocomplete="off" placeholder="未找到，请选择目录"><button type="button" class="secondary-button" data-pick-path="setup-config">选择目录</button></div>
+    </div>
+    <p id="local-path-feedback" role="status" hidden></p>
+    <div class="local-path-actions">
+      <button type="button" class="secondary-button" id="local-path-skip">稍后配置</button>
+      <button type="button" class="primary-button" id="local-path-confirm">确认使用</button>
+    </div>
+  </dialog>
+</body>
 </html>
