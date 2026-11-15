@@ -79,10 +79,24 @@ test('evaluation moves to a separate result screen and can return without discar
  a.get('back-import').listeners.click();assert.equal(a.get('import-page').hidden,false);assert.equal(a.get('results-page').hidden,true);
  a.get('open-results').listeners.click();assert.equal(a.get('results-page').hidden,false);
 });
+test('scan results are separate from repair and export controls',async()=>{
+ const a=await app(async url=>url==='/api/context'?response({csrf_token:'t',template_root:'/templates'}):url==='/api/tasks'?response({task_id:'stages'}):response({task_id:'stages',status:'succeeded',rows:[{name:'one',status:'issue'},{name:'two',status:'clean'}]}));
+ await a.submit();
+ assert.equal(a.get('export-panel').hidden,true);
+ assert.equal(a.get('repair-all').hidden,true);
+ assert.equal(a.get('filter').value,'issue');
+ a.get('go-repair').listeners.click();
+ assert.equal(a.get('step-repair').getAttribute('aria-current'),'step');
+ assert.equal(a.get('export-panel').hidden,false);
+ a.get('back-results').listeners.click();
+ assert.equal(a.get('step-results').getAttribute('aria-current'),'step');
+ assert.equal(a.get('export-panel').hidden,true);
+});
 test('successful repair shows independently derived change counts and review caveat',async()=>{
  const row={name:'one',template_id:'one',status:'clean',edited:true,repair_status:'repaired',repair_reason:'问题牌1张，其他普通牌1张，塔牌0张，总牌量+0张；建议试玩复核。'};
  const a=await app(async url=>url==='/api/context'?response({csrf_token:'t',template_root:'/templates'}):url==='/api/tasks'?response({task_id:'impact'}):response({task_id:'impact',status:'succeeded',total:1,completed:1,rows:[row]}));
  await a.submit();
+ a.get('go-repair').listeners.click();
  assert.match(a.get('result-body').innerHTML,/其他普通牌1张，塔牌0张/);
  assert.match(a.get('result-body').innerHTML,/建议试玩复核/);
 });
@@ -116,7 +130,7 @@ test('selection persists across pages and current-page selection does not includ
   if(url.endsWith('/export/preview')){sent=JSON.parse(options.body);return response({export_id:'page-preview',mode:'preview',status:'succeeded',rows:[],files:[],targets:{output:'/out'}});}
   return response({task_id:'pages',status:'succeeded',rows});
  });
- await a.submit(); a.get('select-page').checked=true;a.get('select-page').listeners.change();
+ await a.submit(); a.get('go-repair').listeners.click(); a.get('select-page').checked=true;a.get('select-page').listeners.change();
  assert.match(a.get('selection-count').textContent,/20/);
  a.get('next').listeners.click();assert.equal(a.get('select-page').checked,false);
  assert.match(a.get('selection-count').textContent,/20/);

@@ -19,6 +19,7 @@ import subprocess
 import sys
 import secrets
 import threading
+import time
 import unicodedata
 from urllib.parse import parse_qs, unquote, urlsplit
 import zipfile
@@ -28,15 +29,18 @@ from .repair import validate_board as _validate_import
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8877
-VERSION = "1.4.1"
+VERSION = "1.5.1"
 SERVICE_ID = "tile-family.full-cover-checker"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 INSTANCE_ID = hashlib.sha256(str(PROJECT_ROOT).encode("utf-8")).hexdigest()[:24]
 DEFAULT_TEMPLATE_ROOT = None
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "输出模板"
-MAX_FILES = 500
+MAX_IDS = 50000
+MAX_FILES = MAX_IDS
 MAX_FILE_BYTES = 32 * 1024 * 1024
 MAX_BODY_BYTES = 64 * 1024 * 1024
+MAX_UPLOAD_BYTES = 256 * 1024 * 1024
+UPLOAD_IDLE_SECONDS = 300
 MAX_SAVED_TASKS = 10
 MAX_SAVED_EXPORTS = 3
 MAX_EDIT_TILES = 20000
@@ -189,6 +193,7 @@ class Application:
         self.lock = threading.Lock()
         self.tasks = OrderedDict()
         self.active_id = None
+        self.upload = None
 
     def context(self):
         home = Path.home()
@@ -204,8 +209,8 @@ class Application:
                 "tile_dir": "",
                 "path_candidates": {"template_root": template, "tile_dir": tile},
                 "csrf_token": self.csrf_token,
-                "limits": {"files": MAX_FILES, "file_bytes": MAX_FILE_BYTES,
-                           "body_bytes": MAX_BODY_BYTES, "active_tasks": 1}}
+                "limits": {"ids": MAX_IDS, "files": MAX_FILES, "file_bytes": MAX_FILE_BYTES,
+                           "body_bytes": MAX_BODY_BYTES, "upload_bytes": MAX_UPLOAD_BYTES, "active_tasks": 1}}
 
     def submit(self, payload):
         if not isinstance(payload, dict):
@@ -215,63 +220,125 @@ class Application:
         root = None
         if mode == "ids":
             ids = payload.get("ids")
-            if not isinstance(ids, list) or not 1 <= len(ids) <= MAX_FILES:
-                raise ApiError(400, "invalid_ids", "每批需要1至500个模板ID")
+            if not isinstance(ids, list) or not 1 <= len(ids) <= MAX_IDS:
+                raise ApiError(400, "invalid_ids", "每批需要1至50000个模板ID")
             for identifier in ids:
                 if not isinstance(identifier, str) or not _ID_PATTERN.fullmatch(identifier):
                     raise ApiError(400, "invalid_id", "模板ID只允许字母、数字、下划线、短横线和点，且不能含路径")
                 inputs.append((identifier, None))
             root = _existing_root(payload.get("template_root", self.template_root))
         elif mode == "files":
-            files = payload.get("files")
-            if not isinstance(files, list) or not 1 <= len(files) <= MAX_FILES:
-                raise ApiError(400, "invalid_files", "每批需要1至500个模板文件")
-            total_bytes = 0
-            for item in files:
-                if not isinstance(item, dict):
-                    raise ApiError(400, "invalid_file", "上传文件项格式错误")
-                name, encoded = item.get("name"), item.get("base64")
-                if (not isinstance(name, str) or not name or len(name) > 255
-                        or name in (".", "..") or any(character in name for character in "/\\\0\r\n")):
-                    raise ApiError(400, "invalid_file", "上传文件名无效")
-                if not isinstance(encoded, str):
-                    raise ApiError(400, "invalid_base64", "上传文件内容需要是Base64文本")
-                if len(encoded) > 4 * ((MAX_FILE_BYTES + 2) // 3):
-                    raise ApiError(413, "file_too_large", "单文件不能超过32 MiB")
-                try:
-                    raw = base64.b64decode(encoded, validate=True)
-                except (ValueError, binascii.Error):
-                    raise ApiError(400, "invalid_base64", "上传文件内容不是有效Base64")
-                if len(raw) > MAX_FILE_BYTES:
-                    raise ApiError(413, "file_too_large", "单文件不能超过32 MiB")
-                total_bytes += len(raw)
-                if total_bytes > MAX_BODY_BYTES:
-                    raise ApiError(413, "batch_too_large", "本批文件合计超过64 MiB")
-                inputs.append((name, raw))
+            inputs, _ = self._decode_files(payload.get("files"))
+        elif mode == "upload":
+            with self.lock:
+                upload_id = payload.get("upload_id")
+                if isinstance(upload_id, str) and self.tasks.get(upload_id, {}).get("uploaded"):
+                    return upload_id
+                upload = self._active_upload(upload_id)
+                if len(upload["files"]) != upload["total"]:
+                    raise ApiError(400, "upload_incomplete", "文件还未全部上传，请重新提交")
+                task_id = self._start_task(upload["files"], None, uploaded=upload["total"], task_id=upload_id)
+                self.upload = None
+                return task_id
         else:
             raise ApiError(400, "invalid_mode", "任务模式需要是ids或files")
-        task_id = secrets.token_hex(12)
-        task = {"task_id": task_id, "status": "running", "completed": 0,
-                "total": len(inputs), "current": inputs[0][0], "rows": [],
-                "states": [], "exports": OrderedDict(), "repair": None, "last_operation": None}
         with self.lock:
-            if self.active_id is not None:
-                raise ApiError(409, "task_running", "已有任务正在识别，已为你接回当前进度",
-                               task_id=self.active_id)
-            while len(self.tasks) >= MAX_SAVED_TASKS:
-                disposable = next((key for key, saved in self.tasks.items() if not self._busy(saved)), None)
-                if disposable is None:
-                    raise ApiError(409, "tasks_busy", "已有任务正在修复或导出，请完成后再导入")
-                del self.tasks[disposable]
-            self.tasks[task_id] = task
-            self.active_id = task_id
+            return self._start_task(inputs, root)
+
+    @staticmethod
+    def _decode_files(files):
+        inputs = []
+        if not isinstance(files, list) or not 1 <= len(files) <= MAX_FILES:
+            raise ApiError(400, "invalid_files", f"每批需要 1 至 {MAX_FILES:,} 个模板文件")
+        total_bytes = 0
+        for item in files:
+            if not isinstance(item, dict):
+                raise ApiError(400, "invalid_file", "上传文件项格式错误")
+            name, encoded = item.get("name"), item.get("base64")
+            if (not isinstance(name, str) or not name or len(name) > 255
+                    or name in (".", "..") or any(character in name for character in "/\\\0\r\n")):
+                raise ApiError(400, "invalid_file", "上传文件名无效")
+            if not isinstance(encoded, str):
+                raise ApiError(400, "invalid_base64", "上传文件内容需要是Base64文本")
+            if len(encoded) > 4 * ((MAX_FILE_BYTES + 2) // 3):
+                raise ApiError(413, "file_too_large", "单文件不能超过32 MiB")
+            try:
+                raw = base64.b64decode(encoded, validate=True)
+            except (ValueError, binascii.Error):
+                raise ApiError(400, "invalid_base64", "上传文件内容不是有效Base64")
+            if len(raw) > MAX_FILE_BYTES:
+                raise ApiError(413, "file_too_large", "单文件不能超过32 MiB")
+            total_bytes += len(raw)
+            inputs.append((name, raw))
+        if total_bytes > MAX_UPLOAD_BYTES:
+            raise ApiError(413, "batch_too_large", "本批文件合计超过 256 MiB")
+        return inputs, total_bytes
+
+    def begin_upload(self, payload):
+        total = payload.get("total") if isinstance(payload, dict) else None
+        if type(total) is not int or not 1 <= total <= MAX_FILES:
+            raise ApiError(400, "invalid_files", f"每批需要 1 至 {MAX_FILES:,} 个模板文件")
+        with self.lock:
+            self._expire_upload()
+            if self.upload:
+                raise ApiError(409, "upload_running", "已有文件正在上传，请等待上传完成后再试")
+            upload_id = secrets.token_hex(12)
+            self.upload = {"id": upload_id, "total": total, "files": [], "size": 0,
+                           "expires": time.monotonic() + UPLOAD_IDLE_SECONDS}
+        return {"upload_id": upload_id}
+
+    def _expire_upload(self):
+        if self.upload and self.upload["expires"] <= time.monotonic():
+            self.upload = None
+
+    def _active_upload(self, upload_id):
+        self._expire_upload()
+        if not self.upload or self.upload["id"] != upload_id:
+            raise ApiError(404, "upload_not_found", "这批上传已失效，请重新提交")
+        return self.upload
+
+    def append_upload(self, upload_id, payload):
+        if not isinstance(payload, dict):
+            raise ApiError(400, "invalid_file", "上传文件项格式错误")
+        with self.lock:
+            upload = self._active_upload(upload_id)
+            if payload.get("cancel") is True:
+                self.upload = None
+                return {"cancelled": True}
+            offset = payload.get("offset")
+            if type(offset) is not int or offset != len(upload["files"]):
+                raise ApiError(409, "invalid_upload_offset", "上传进度已变化，请重新提交")
+            files, size = self._decode_files(payload.get("files"))
+            if offset + len(files) > upload["total"]:
+                raise ApiError(400, "invalid_files", "上传的文件数超过此批次的数量")
+            if upload["size"] + size > MAX_UPLOAD_BYTES:
+                raise ApiError(413, "batch_too_large", "本批文件合计超过 256 MiB")
+            upload["files"].extend(files)
+            upload["size"] += size
+            upload["expires"] = time.monotonic() + UPLOAD_IDLE_SECONDS
+            return {"received": len(upload["files"])}
+
+    def _start_task(self, inputs, root, uploaded=0, task_id=None):
+        task_id = task_id or secrets.token_hex(12)
+        task = {"task_id": task_id, "status": "running", "completed": 0,
+                "total": len(inputs), "uploaded": uploaded, "current": inputs[0][0], "rows": [],
+                "states": [], "exports": OrderedDict(), "repair": None, "last_operation": None}
+        if self.active_id is not None:
+            raise ApiError(409, "task_running", "已有任务正在识别，已为你接回当前进度",
+                           task_id=self.active_id)
+        while len(self.tasks) >= MAX_SAVED_TASKS:
+            disposable = next((key for key, saved in self.tasks.items() if not self._busy(saved)), None)
+            if disposable is None:
+                raise ApiError(409, "tasks_busy", "已有任务正在修复或导出，请完成后再导入")
+            del self.tasks[disposable]
+        self.tasks[task_id] = task
+        self.active_id = task_id
         threading.Thread(target=self._run, args=(task, inputs, root), daemon=True,
                          name="covercheck-" + task_id[:8]).start()
         return task_id
 
     def _run(self, task, inputs, root):
         try:
-            from .engine import analyze_bytes
             for name, uploaded in inputs:
                 with self.lock:
                     task["current"] = name
@@ -280,14 +347,13 @@ class Application:
                 exportable = False
                 try:
                     raw = _safe_read(root, name + "_m.bytes") if root is not None else uploaded
-                    row = dict(analyze_bytes(raw, name))
-                    for tile in row["tiles"]:
-                        tile["source_index"] = tile["index"]
-                    row.update(name=name, status="issue" if row["issues"] else "clean")
                     checked = _validate_import(raw)
+                    if checked["analysis"] is None:
+                        raise ValueError("；".join(checked["errors"]))
+                    row = {key: value for key, value in checked["analysis"].items() if key not in ("tiles", "towers")}
+                    row.update(name=name, status="issue" if row["issues"] else "clean")
                     validation_errors = checked["errors"]
                     validation_warnings = checked["warnings"]
-                    row["support_issues"] = checked["analysis"].get("support_issues", [])
                 except Exception as error:
                     detail = str(error) or type(error).__name__
                     message = detail if re.search(r"[\u4e00-\u9fff]", detail) else "模板文件无法解析，请确认是关卡编辑器导出的 _m.bytes 文件。"
@@ -295,9 +361,9 @@ class Application:
                 with self.lock:
                     task["rows"].append(row)
                     task["states"].append({"original_raw": raw, "current_raw": raw,
-                        "original_board": deepcopy(row), "revision": 0, "edited": False, "undo_history": [],
+                        "original_board": row, "revision": 0, "edited": False, "undo_history": [],
                         "translation": {"dx": 0, "dy": 0},
-                        "source_indices": [tile["index"] for tile in row.get("tiles", [])],
+                        "source_indices": range(row.get("tile_count", 0)),
                         "repair_status": "not_run", "repair_reason": "", "repair_metrics": {}, "validation_errors": validation_errors,
                         "validation_warnings": validation_warnings,
                         "exportable": exportable})
@@ -314,11 +380,13 @@ class Application:
                 task["current"] = ""
                 self.active_id = None
 
-    def snapshot(self, task_id):
+    def snapshot(self, task_id, progress_only=False):
         with self.lock:
             task = self._task(task_id)
             result = {key: deepcopy(value) for key, value in task.items()
                       if key not in ("rows", "states", "exports", "repair", "last_operation")}
+            if progress_only:
+                return result
             result["rows"] = []
             for index, row in enumerate(task["rows"]):
                 public = {key: deepcopy(value) for key, value in row.items() if key not in ("tiles", "towers")}
@@ -347,9 +415,19 @@ class Application:
     def _row(self, task, index):
         if index < 0 or index >= len(task["rows"]):
             raise ApiError(404, "row_not_found", "该结果尚不存在")
+        from .engine import analyze_bytes
+        state = task["states"][index]
         row = deepcopy(task["rows"][index])
-        row.update(self._metadata(task["states"][index]))
-        row["original_board"] = deepcopy(task["states"][index]["original_board"])
+        original = deepcopy(state["original_board"])
+        if row["status"] != "error":
+            current = analyze_bytes(state["current_raw"], row["name"])
+            initial = current if state["original_raw"] == state["current_raw"] else analyze_bytes(state["original_raw"], original["name"])
+            for dest, decoded, origins in ((original, initial, range(initial["tile_count"])),
+                                            (row, current, state["source_indices"])):
+                dest["tiles"] = [dict(tile, source_index=origin) for tile, origin in zip(decoded["tiles"], origins)]
+                dest["towers"] = decoded["towers"]
+        row.update(self._metadata(state))
+        row["original_board"] = original
         return row
 
     @staticmethod
@@ -437,7 +515,7 @@ class Application:
                 raise ApiError(422, "invalid_board", reason, errors=[reason])
             if not checked["valid"]:
                 raise ApiError(422, "invalid_board", "；".join(checked["errors"]), errors=checked["errors"])
-            old_origins = state.get("source_indices", list(range(len(task["rows"][index]["tiles"]))))
+            old_origins = state["source_indices"]
             origins = [old_origins[tile["index"]] if tile.get("index") is not None and tile["index"] >= 0 else None
                        for tile in tiles]
             self._replace(task, index, raw, checked, "edited", source_indices=origins)
@@ -501,7 +579,7 @@ class Application:
         state.update(current_raw=raw, source_indices=source_indices[:], edited=raw != state["original_raw"], repair_status=repair_status,
                      repair_reason="", repair_metrics={}, exportable=checked["valid"] and raw != state["original_raw"],
                      validation_errors=list(checked["errors"]), validation_warnings=list(checked["warnings"]))
-        task["rows"][index] = analysis
+        task["rows"][index] = {key: value for key, value in analysis.items() if key not in ("tiles", "towers")}
         if repair_status == "edited" and (task.get("last_operation") or {}).get("kind") == "export":
             # A refreshed page must not offer an older ZIP as the current revision.
             task["last_operation"] = None
@@ -684,20 +762,28 @@ class Application:
                 raise ApiError(409, "preview_stale", "预览已变化或已写入，请重新预览导出")
             if any(task["states"][index]["revision"] != version for index, version in job["_revisions"].items()):
                 raise ApiError(409, "preview_stale", "模板已修改，请重新预览导出")
+            if set(job["targets"]) - {"output"} and (
+                    not isinstance(payload, dict) or payload.get("sync_pulled") is not True):
+                raise ApiError(400, "sync_not_confirmed", "同步前请先拉取目标模板仓库至最新，再勾选确认")
+            renamed = payload.get("renamed_indices", []) if isinstance(payload, dict) else []
+            eligible = {row["index"] for row in job.get("rows", []) if row.get("sync_conflicts")}
+            if (not isinstance(renamed, list)
+                    or any(type(index) is not int or index not in eligible for index in renamed)):
+                raise ApiError(400, "invalid_renames", "改名选项已失效，请重新预览")
             total = len(job["files"]) * len(job["targets"])
             job.update(mode="write", status="running", total=total, completed=0, current="", deliveries=[])
             result = deepcopy({key: value for key, value in job.items()
                                if key != "data" and not key.startswith("_")})
-        threading.Thread(target=self._run_delivery, args=(job,), daemon=True).start()
+        threading.Thread(target=self._run_delivery, args=(job, renamed), daemon=True).start()
         return result
 
-    def _run_delivery(self, job):
+    def _run_delivery(self, job, renamed_indices):
         try:
             from .delivery import commit_delivery
             def progress(update):
                 with self.lock:
                     job.update({key: update[key] for key in ("completed", "total", "current") if key in update})
-            report = commit_delivery(job["_plan"], progress=progress)
+            report = commit_delivery(job["_plan"], progress=progress, renamed_indices=renamed_indices)
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as package:
                 for filename, raw in job["_plan"]["files"].items():
@@ -706,7 +792,7 @@ class Application:
                 job.update(status="succeeded", data=buffer.getvalue(), deliveries=report["rows"],
                            completed=report["completed"], total=report["total"])
                 if not report["ok"]:
-                    job["error"] = "部分目录未写入，请查看逐目标结果；新模板ZIP仍可下载。"
+                    job["error"] = "有文件未写入，请查看逐目标结果；新模板 ZIP 仍可下载。"
         except Exception as error:
             with self.lock:
                 job.update(status="failed", error=_human_reason(error, "写入失败，请重新预览后重试"))
@@ -738,7 +824,7 @@ class Application:
                 candidate, version = desired, 1
                 while _name_key(candidate) in reserved:
                     version += 1
-                    candidate = desired + "_v" + str(version)
+                    candidate = desired + "v" + str(version)
                 try:
                     _safe_export_name(candidate)
                 except ApiError as error:
@@ -965,6 +1051,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 raise ApiError(400, "directory_picker", result["error"])
             self._json(200, result)
             return
+        if path == "/api/uploads" and method == "POST":
+            self._json(201, self.app.begin_upload(self._body()))
+            return
+        upload = re.fullmatch(r"/api/uploads/([a-f0-9]{24})", path)
+        if upload and method == "POST":
+            self._json(200, self.app.append_upload(upload.group(1), self._body()))
+            return
         if path == "/api/tasks" and method == "POST":
             self._json(202, {"task_id": self.app.submit(self._body())})
             return
@@ -1024,7 +1117,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif index is not None:
             self._json(200, self.app.row(task_id, int(index)))
         else:
-            self._json(200, self.app.snapshot(task_id))
+            self._json(200, self.app.snapshot(task_id, progress_only=query.get("progress") == ["1"]))
 
     def _static(self, path):
         relative = "index.html" if path == "/" else path.lstrip("/")

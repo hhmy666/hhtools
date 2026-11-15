@@ -126,17 +126,33 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(task["rows"][1]["error_detail"])
         self.assertEqual(task["summary"]["clean"], 0)
 
+    def test_upload_chunks_over_http_and_retry_final_submission(self):
+        code, created = self.request("POST", "/api/uploads", {"total": 2})
+        self.assertEqual(code, 201)
+        upload_id = created["upload_id"]
+        for offset, raw in enumerate((ADJACENT, b"invalid")):
+            code, received = self.request("POST", "/api/uploads/" + upload_id, {
+                "offset": offset, "files": [
+                    {"name": f"{offset}_m.bytes", "base64": base64.b64encode(raw).decode()}]})
+            self.assertEqual((code, received["received"]), (200, offset + 1))
+        payload = {"mode": "upload", "upload_id": upload_id}
+        for _ in range(2):
+            self.assertEqual(self.request("POST", "/api/tasks", payload), (202, {"task_id": upload_id}))
+        task = self.finish(upload_id)
+        self.assertEqual(task["uploaded"], 2)
+        self.assertEqual([row["status"] for row in task["rows"]], ["issue", "error"])
+
     def test_duplicate_submission_is_rejected_until_real_processing_finishes(self):
-        from covercheck.engine import analyze_bytes
+        from covercheck.repair import validate_board
         entered, release = threading.Event(), threading.Event()
         self.addCleanup(release.set)
 
-        def delayed_analysis(raw, name):
+        def delayed_analysis(raw):
             entered.set()
             release.wait(timeout=4)
-            return analyze_bytes(raw, name)
+            return validate_board(raw)
 
-        with patch("covercheck.engine.analyze_bytes", side_effect=delayed_analysis):
+        with patch("covercheck.server._validate_import", side_effect=delayed_analysis):
             code, first = self.request("POST", "/api/tasks", {"mode": "ids", "ids": ["good", "clean"]})
             self.assertEqual(code, 202)
             self.assertTrue(entered.wait(timeout=2))
@@ -223,7 +239,8 @@ class ServerTests(unittest.TestCase):
         payloads = [
             {"mode": "files", "files": [{"name": "x.bytes", "base64": "%%%"}]},
             {"mode": "files", "files": []},
-            {"mode": "ids", "ids": ["good"] * 501},
+            {"mode": "ids", "ids": ["good"] * 50001},
+            {"mode": "files", "files": [{"name": "x.bytes", "base64": ""}] * 50001},
             {"mode": "ids", "ids": ["good"], "template_root": str(self.root / "missing")},
         ]
         for payload in payloads:

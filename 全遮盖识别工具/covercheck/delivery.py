@@ -125,7 +125,7 @@ def plan_delivery(entries, targets, pattern="fixed{原模板ID}", reserved_ids=(
     if not isinstance(pattern, str):
         raise ValueError("请填写新模板命名格式")
     _safe_export_name(pattern.replace("{原模板ID}", "sample").replace("{id}", "sample"))
-    roots, occupied, seen_paths = {}, set(), set()
+    roots, occupied, names_by_target, seen_paths = {}, set(), {}, set()
     for target, value in targets.items():
         if not isinstance(target, str) or not target:
             raise ValueError("导出目标名称不能为空")
@@ -137,7 +137,8 @@ def plan_delivery(entries, targets, pattern="fixed{原模板ID}", reserved_ids=(
         roots[target] = root
         if fd is not None:
             try:
-                occupied.update(_key(name) for name in os.listdir(fd))
+                names_by_target[target] = {_key(name) for name in os.listdir(fd)}
+                occupied.update(names_by_target[target])
             finally:
                 os.close(fd)
     reserved, analyses, indices = {_key(value) for value in reserved_ids if value}, [], set()
@@ -154,10 +155,13 @@ def plan_delivery(entries, targets, pattern="fixed{原模板ID}", reserved_ids=(
     for entry, analysis in zip(entries, analyses):
         desired = _safe_export_name(pattern.replace("{原模板ID}", analysis["template_id"])
                                    .replace("{id}", analysis["template_id"]))
+        requested = desired + "_m.bytes"
+        sync_conflicts = [target for target, names in names_by_target.items()
+                          if target != "output" and _key(requested) in names]
         new_id, version = desired, 1
         while _key(new_id) in reserved or _key(new_id + "_m.bytes") in occupied:
             version += 1
-            new_id = _safe_export_name(desired + "_v" + str(version))
+            new_id = _safe_export_name(desired + "v" + str(version))
         reserved.add(_key(new_id))
         filename = new_id + "_m.bytes"
         occupied.add(_key(filename))
@@ -165,6 +169,8 @@ def plan_delivery(entries, targets, pattern="fixed{原模板ID}", reserved_ids=(
         row = {"index": entry["index"], "name": entry["name"], "new_id": new_id, "filename": filename,
                "targets": [{"target": target, "path": str(root.path / filename), "status": "create"}
                            for target, root in roots.items()]}
+        if sync_conflicts:
+            row.update(requested_filename=requested, sync_conflicts=sync_conflicts)
         rows.append(row)
         files[filename] = raw
         prepared.append({"row": deepcopy(row), "raw": raw, "sha256": sha256(raw).hexdigest()})
@@ -183,7 +189,7 @@ def _publish(root, created, filename, raw, expected_sha):
     temp, published, applied = ".delivery-" + secrets.token_hex(16), None, False
     try:
         if _collisions(fd, filename):
-            raise ValueError("目标文件已变化，请重新预览")
+            raise ValueError("同名文件已存在或文件状态已变化，请重新预览")
         file_fd = os.open(temp, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
         with os.fdopen(file_fd, "w+b") as stream:
             stream.write(raw)
@@ -201,7 +207,7 @@ def _publish(root, created, filename, raw, expected_sha):
                 if check_fd is not None:
                     os.close(check_fd)
             if _collisions(fd, filename) or _identity(os.stat(temp, dir_fd=fd, follow_symlinks=False)) != identity:
-                raise ValueError("目标文件已变化，请重新预览")
+                raise ValueError("同名文件已存在或文件状态已变化，请重新预览")
             # Link publishes a complete inode atomically and fails on any existing leaf.
             os.link(temp, filename, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
             published = _identity(os.stat(filename, dir_fd=fd, follow_symlinks=False))
@@ -235,13 +241,14 @@ def _publish(root, created, filename, raw, expected_sha):
             os.close(fd)
 
 
-def commit_delivery(plan, progress=None):
+def commit_delivery(plan, progress=None, *, renamed_indices=()):
     """Commit a retained private preview; report each file/target independently.
 
     A failed fsync after publication has applied=True. Changed destinations need
     another preview; this function never silently allocates a different filename.
     Progress receives one dict, and notification errors cannot interrupt writes.
     """
+    renamed_indices = set(renamed_indices)
     roots, prepared = plan["_roots"], plan["_prepared"]
     rows = [deepcopy(item["row"]) for item in prepared]
     total, completed, created, blocked = sum(len(row["targets"]) for row in rows), 0, {}, {}
@@ -258,9 +265,10 @@ def commit_delivery(plan, progress=None):
         try:
             fd, _ = _open_root(root.path, root)
             if fd is not None:
+                occupied = {_key(name) for name in os.listdir(fd)}
                 for row in rows:
-                    if _collisions(fd, row["filename"]):
-                        blocked[target, row["filename"]] = "目标文件已变化，请重新预览"
+                    if _key(row["filename"]) in occupied:
+                        blocked[target, row["filename"]] = "同名文件已存在，请重新预览获取新名称"
         except (OSError, ValueError) as error:
             for row in rows:
                 blocked[target, row["filename"]] = str(error)
@@ -269,6 +277,12 @@ def commit_delivery(plan, progress=None):
                 os.close(fd)
     for row, item in zip(rows, prepared):
         for target in row["targets"]:
+            if target["target"] != "output" and row.get("sync_conflicts") and row["index"] not in renamed_indices:
+                target.update(status="skipped", applied=False,
+                              error=f'{row["requested_filename"]} 与所选仓库重名，未确认使用 {row["filename"]}')
+                completed += 1
+                notify("writing", target["path"])
+                continue
             try:
                 error = blocked.get((target["target"], row["filename"]))
                 if error:

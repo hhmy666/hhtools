@@ -425,7 +425,7 @@ class RepairApiTests(unittest.TestCase):
         for index in range(3):
             self.mark_changed(path, index)
         export_id, status = self.export(path, {"pattern": "source", "indices": [0, 1, 2]})
-        self.assertEqual(status["files"], ["source_v2_m.bytes", "source_v3_m.bytes", "source_v4_m.bytes"])
+        self.assertEqual(status["files"], ["sourcev2_m.bytes", "sourcev3_m.bytes", "sourcev4_m.bytes"])
         code, raw, _ = self.request("GET", path + "/export/" + export_id, raw=True)
         self.assertEqual(code, 200)
         with zipfile.ZipFile(io.BytesIO(raw)) as package:

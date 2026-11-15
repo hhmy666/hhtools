@@ -46,25 +46,50 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(scalar(parse_fields(raw), 100, 2), b"preserved metadata")
 
     def test_original_ids_source_names_and_batch_duplicates_are_reserved(self):
-        entries = self.entries("one", "one_v2", "one")
-        entries[1]["name"] = "one_v3_m.bytes"
+        entries = self.entries("one", "onev2", "one")
+        entries[1]["name"] = "onev3_m.bytes"
         plan = delivery.plan_delivery(entries, {"output": str(self.root)}, "{id}")
-        self.assertEqual([r["new_id"] for r in plan["rows"]], ["one_v4", "one_v2_v2", "one_v5"])
+        self.assertEqual([r["new_id"] for r in plan["rows"]], ["onev4", "onev2v2", "onev5"])
 
     def test_unselected_original_ids_are_reserved_without_exporting_other_entries(self):
         plan = delivery.plan_delivery(self.entries("one"), {"output": str(self.root)}, "fixed{id}",
-                                      reserved_ids=("FIXEDone", "ｆｉｘｅｄone_v2"))
-        self.assertEqual([row["new_id"] for row in plan["rows"]], ["fixedone_v3"])
-        self.assertEqual(list(plan["files"]), ["fixedone_v3_m.bytes"])
+                                      reserved_ids=("FIXEDone", "ｆｉｘｅｄonev2"))
+        self.assertEqual([row["new_id"] for row in plan["rows"]], ["fixedonev3"])
+        self.assertEqual(list(plan["files"]), ["fixedonev3_m.bytes"])
         self.assertEqual(list(self.root.iterdir()), [])
 
     def test_collision_in_any_target_casefold_and_nfkc_allocates_one_version(self):
         left, right = self.root / "left", self.root / "right"
         left.mkdir(); right.mkdir()
         (right / "ＦＩＸＥＤoriginal_m.bytes").write_bytes(b"occupied")
-        (left / "fixedORIGINAL_v2_m.bytes").write_bytes(b"occupied")
+        (left / "fixedORIGINALv2_m.bytes").write_bytes(b"occupied")
         plan = delivery.plan_delivery(self.entries(), {"output": str(left), "tile": str(right)}, "fixed{id}")
-        self.assertEqual(plan["rows"][0]["filename"], "fixedoriginal_v3_m.bytes")
+        self.assertEqual(plan["rows"][0]["filename"], "fixedoriginalv3_m.bytes")
+
+    def test_existing_repository_name_requires_explicit_rename_per_template(self):
+        repository = self.root / "repository"
+        repository.mkdir()
+        targets = {"output": str(self.root / "output"), "template": str(repository)}
+        original = repository / "FIXEDone_m.bytes"
+        original.write_bytes(b"original")
+        (repository / "fixedonev2_m.bytes").write_bytes(b"older version")
+        plan = delivery.plan_delivery(self.entries("one", "two"), targets, "fixed{id}")
+        conflict, normal = plan["rows"]
+        self.assertEqual(conflict["requested_filename"], "fixedone_m.bytes")
+        self.assertEqual(conflict["filename"], "fixedonev3_m.bytes")
+        self.assertEqual(conflict["sync_conflicts"], ["template"])
+        self.assertNotIn("sync_conflicts", normal)
+        report = delivery.commit_delivery(plan)
+        self.assertEqual([target["status"] for target in report["rows"][0]["targets"]],
+                         ["written", "skipped"])
+        self.assertEqual([target["status"] for target in report["rows"][1]["targets"]],
+                         ["written", "written"])
+        self.assertFalse((repository / conflict["filename"]).exists())
+        retry = delivery.plan_delivery(self.entries("one"), targets, "fixed{id}")
+        self.assertTrue(delivery.commit_delivery(retry, renamed_indices=[0])["ok"])
+        new = retry["rows"][0]
+        self.assertEqual(analyze_bytes((repository / new["filename"]).read_bytes())["template_id"], new["new_id"])
+        self.assertEqual(original.read_bytes(), b"original")
 
     def test_commit_creates_complete_files_and_reports_every_target_progress(self):
         targets = {"output": str(self.root / "out"), "tile": str(self.root / "nested" / "tile")}

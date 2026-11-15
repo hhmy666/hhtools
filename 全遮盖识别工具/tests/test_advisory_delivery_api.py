@@ -92,7 +92,7 @@ class AdvisoryDeliveryApiTests(unittest.TestCase):
         self.assertEqual(preview['status'], 'succeeded', preview)
         self.assertEqual(preview['mode'], 'preview')
         self.assertFalse(output.exists())
-        code, writing = self.request('POST', path + '/export/' + preview['export_id'] + '/write', {})
+        code, writing = self.request('POST', path + '/export/' + preview['export_id'] + '/write', {'sync_pulled': True})
         self.assertEqual(code, 202, writing)
         done = self.poll(path + '/export/' + preview['export_id'] + '/status')
         self.assertEqual(done['status'], 'succeeded', done)
@@ -108,7 +108,7 @@ class AdvisoryDeliveryApiTests(unittest.TestCase):
         output = self.root / 'not-created'
         preview = self.preview(path, output)
         self.change(path, x=3)
-        code, result = self.request('POST', path + '/export/' + preview['export_id'] + '/write', {})
+        code, result = self.request('POST', path + '/export/' + preview['export_id'] + '/write', {'sync_pulled': True})
         self.assertEqual(code, 409, result)
         self.assertFalse(output.exists())
 
