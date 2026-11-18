@@ -1,0 +1,6 @@
+{
+  "sourceRoots": ["前端/index.html", "前端/模块"],
+  "locale": "zh-CN",
+  "canonicalMap": "文档/UX-CONTRACT.md",
+  "ownership": {"Select/Listbox": "native"}
+}

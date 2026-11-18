@@ -1,0 +1,25 @@
+<dialog class="manual-dialog" data-help-dialog aria-labelledby="help-title">
+  <header class="manual-header"><div><h2 id="help-title">使用说明</h2><p>按任务查看操作步骤、判断依据和完成标准。</p><small>你正在查看 <strong data-manual-current>我该从哪里开始</strong></small></div>
+    <label class="manual-search"><span class="visually-hidden">搜索使用说明</span><input type="search" data-manual-search placeholder="搜索模板、试玩、背包…" autocomplete="off"></label>
+    <button class="icon-button" type="button" data-dismiss aria-label="关闭使用说明"><svg aria-hidden="true"><use href="/assets/icons.svg#close"></use></svg></button>
+  </header>
+  <div class="manual-layout">
+    <nav class="manual-nav" aria-label="使用说明目录">
+      <strong>先选任务</strong><a href="#manual-start">我该从哪里开始</a><a href="#manual-setup">准备输入与目录</a>
+      <strong>完成一次编辑</strong><a href="#manual-import">1. 载入关卡模板</a><a href="#manual-edit">2. 修改与检查牌面</a><a href="#manual-play">3. 试玩与通关推演</a><a href="#manual-save">4. 另存并同步</a>
+      <strong>批量工作</strong><a href="#manual-batch">批量编辑与试玩</a>
+      <strong>规则与排查</strong><a href="#manual-faq">排查常见问题</a>
+    </nav>
+    <div class="manual-content" data-manual-content tabindex="-1">
+      <p data-manual-empty hidden>没有找到匹配章节。试试「模板」「试玩」或「背包」。</p>
+      <section id="manual-start"><h3>我该从哪里开始</h3><p>改一张模板，在标题栏输入 ID 或上传文件。改多张模板，点「批量修改模板」。要看实际开局图案，直接从当前模板进入试玩。</p><div class="manual-callout"><strong>完成检查</strong><p>确认改的是目标模板，检查层级与 Tile 统计，试玩后另存。需要交接时，再同步到模板仓库。</p></div></section>
+      <section id="manual-setup"><h3>准备输入与目录</h3><p>首次启动会尝试找到本机的 tileleveltemplate/Template。可用标题栏齿轮手输或选取其他目录，再点「保存路径」。只有本地文件时，可直接上传 .bytes。</p><h4>文件写在哪里</h4><p>另存写入「输出模板」。同步会在模板仓库新建文件。</p></section>
+      <section id="manual-import"><h3>1. 载入关卡模板</h3><h4>怎么操作</h4><ol><li>在模板 ID 栏输入 ID，按 Enter 或点「读取模板」。</li><li>也可点「上传模板」选择 .bytes，或新建空模板。</li><li>核对右侧显示的源模板名和总 Tile 数。</li></ol></section>
+      <section id="manual-edit"><h3>2. 修改与检查牌面</h3><p>在右侧选择牌或塔，左键添加，右键删除。Z 撤销、Shift+Z 重做，W/A/S/D 选择移塔方向再点塔。Alt+方向键移动键盘光标，Enter 执行。</p><h4>预览配牌</h4><p>点「预览」查看当前副本的配牌图案。预览时可更换随机种子和调整 MaxZ，退出后回到进入前的草稿与显示层。</p><h4>按层检查</h4><p>MaxZ 为「无限制」时显示所有层；输入层数可查看该层及以下。红框提示全遮盖，蓝框提示悬空。「每层 Tile 数」按 Unity 口径排除塔牌。</p></section>
+      <section id="manual-play"><h3>3. 试玩与通关推演</h3><h4>怎么操作</h4><ol><li>选副本档位，点「一键试玩」。适配按钮按实际牌面放大，滚轮可继续缩放。</li><li>在右侧设定背包格和随机局数，再点「运行推演」。</li></ol><h4>怎么看结果</h4><p>随机点击统计多局通关率；贪心凑组、局部最优、解锁优先、高压路径各跑一条可复现的路线。比较通关结果、背包峰值和点击数。失败行悬停可看示例失败步数。</p><div class="manual-callout"><strong>推演口径</strong><p>使用当前副本生成的同一开局牌面。按遮挡、三消和背包判满规则执行。结果用于比较走法，不等于线上玩家胜率，也不含局内道具或动态塔换牌。</p></div></section>
+      <section id="manual-save"><h3>4. 另存并同步</h3><ol><li>在原模板 ID 输入栏改为新 ID，只用英文字母和数字。</li><li>点「另存为新模板」。仓库或输出目录已有同名文件时，换一个 ID 再另存。</li><li>另存成功后，点击「同步到模板仓库」。同步时会再次检查重名。</li></ol></section>
+      <section id="manual-batch"><h3>批量编辑与试玩</h3><ol><li>点「批量修改模板」，粘贴一列 ID，或选择、拖入多个文件。</li><li>读取后按输入顺序查看画布。点击一张画布切换右侧工具；每张都保留独立草稿和撤销记录。</li><li>从任意卡片点「试玩」，用「上一关」「下一关」切换模板。返回编辑后回到当前模板。</li></ol><p>仍可用标题栏对当前模板逐张另存、同步。</p></section>
+      <section id="manual-faq"><h3>排查常见问题</h3><h4>模板读不到</h4><p>核对 ID 和本地模板库路径，或上传对应文件。批量读取有可用模板时仍会进入编辑页，失败项会单独列出。</p><h4>试玩与线上不同</h4><p>核对实验组生效副本参数、随机种子和类型池。动态塔牌和实时活动状态可能影响局内表现。</p></section>
+    </div>
+  </div>
+</dialog>

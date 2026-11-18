@@ -214,25 +214,39 @@ def resolve_export_selections(
     config: ResolvedBatchConfig,
     generated: GenerationBatchResult,
     choices: Sequence[CandidateChoice],
+    *,
+    allow_incomplete_snapshot: bool = False,
 ) -> tuple[ExportSelection, ...]:
-    """Resolve reviewed IDs against a fresh, ordered generation result."""
+    """Resolve reviewed IDs against a server-owned generation result."""
 
-    if len(config.work_items) != len(generated.items):
-        raise InputValidationError("生成结果与当前配置快照数量不一致")
-    work_by_key: dict[tuple[str, str], tuple[Any, Any]] = {}
-    for work, item in zip(config.work_items, generated.items):
-        key = (work.template_key, work.plan.plan_id)
-        if key in work_by_key:
-            raise InputValidationError("当前配置中存在含糊的已解析方案身份")
-        if (item.template_key, item.plan_id) != key:
+    selected_keys = {(choice.template_key, choice.resolved_plan_id) for choice in choices}
+    work_entries = [
+        (key, work)
+        for work in config.work_items
+        if (key := (work.template_key, work.plan.plan_id)) in selected_keys
+        or not allow_incomplete_snapshot
+    ]
+    item_entries = [
+        (key, item)
+        for item in generated.items
+        if (key := (item.template_key, item.plan_id)) in selected_keys
+        or not allow_incomplete_snapshot
+    ]
+    work_by_key = dict(work_entries)
+    item_by_key = dict(item_entries)
+    if len(work_by_key) != len(work_entries) or len(item_by_key) != len(item_entries):
+        raise InputValidationError("当前配置中存在含糊的已解析方案身份")
+    if not allow_incomplete_snapshot:
+        if len(work_by_key) != len(item_by_key):
+            raise InputValidationError("生成结果与当前配置快照数量不一致")
+        if tuple(work_by_key) != tuple(item_by_key):
             raise InputValidationError("生成结果与当前配置顺序不一致")
-        work_by_key[key] = (work, item)
 
     resolved: list[ExportSelection] = []
     for choice in choices:
         key = (choice.template_key, choice.resolved_plan_id)
-        pair = work_by_key.get(key)
-        if pair is None:
+        work = work_by_key.get(key)
+        if work is None:
             raise InputValidationError(
                 "所选候选不属于当前已解析配置",
                 evidence={
@@ -240,14 +254,16 @@ def resolve_export_selections(
                     "resolved_plan_id": choice.resolved_plan_id,
                 },
             )
-        work, item = pair
-        if item.status not in {"success", "partial"} or item.source is None:
+        item = item_by_key.get(key)
+        if item is None or item.source is None or (
+            not allow_incomplete_snapshot and item.status not in {"success", "partial"}
+        ):
             raise InputValidationError(
                 "所选生成项本次重算没有可用候选，禁止导出",
                 evidence={
                     "template_key": choice.template_key,
                     "resolved_plan_id": choice.resolved_plan_id,
-                    "generation_error": item.error,
+                    "generation_error": item.error if item else None,
                 },
             )
         matches = [

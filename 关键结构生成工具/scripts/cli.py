@@ -12,7 +12,7 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -302,10 +302,14 @@ def _command_export(args: argparse.Namespace) -> int:
     reviewed_snapshot = None
     reviewed_snapshot_id = getattr(args, "review_snapshot", None)
     supplied_seed = getattr(args, "batch_seed", None)
+    choices = load_selection_payload(Path(args.selection))
+    selected_keys = {(choice.template_key, choice.resolved_plan_id) for choice in choices}
+    selected_templates = {key for key, _ in selected_keys}
     if reviewed_snapshot_id:
         reviewed_snapshot = SourceSnapshotStore(service.settings_path.parent).load(
             reviewed_snapshot_id,
             profile=profile,
+            template_keys=selected_templates,
         )
         if supplied_seed is not None and supplied_seed != reviewed_snapshot.batch_seed:
             raise ConfigError(
@@ -339,20 +343,40 @@ def _command_export(args: argparse.Namespace) -> int:
                 "--batch-seed",
             )
     file_inputs = _parse_file_inputs(args.file_input)
-    if reviewed_snapshot is not None:
-        overlap = sorted(set(file_inputs) & set(reviewed_snapshot.sources))
-        if overlap:
-            raise ConfigError(
-                "ambiguous_source_input",
-                "同一模板不能同时使用审核快照和 --file-input",
-                "--file-input",
-            )
-    choices = load_selection_payload(Path(args.selection))
+    configured_templates = {work.template_key for work in config.work_items}
+    if set(file_inputs) - configured_templates:
+        raise ConfigError(
+            "unknown_file_mapping",
+            "文件映射中的模板不属于当前配置",
+            "--file-input",
+        )
+    selected_work = tuple(
+        work for work in config.work_items
+        if (work.template_key, work.plan.plan_id) in selected_keys
+    )
+    known_keys = {(work.template_key, work.plan.plan_id) for work in selected_work}
+    if missing := selected_keys - known_keys:
+        template_key, plan_id = min(missing)
+        raise InputValidationError(
+            "所选候选不属于当前已解析配置",
+            evidence={"template_key": template_key, "resolved_plan_id": plan_id},
+        )
+    config = replace(config, work_items=selected_work)
+    selected_files = {key: path for key, path in file_inputs.items() if key in selected_templates}
+    selected_snapshots = None if reviewed_snapshot is None else {
+        key: source for key, source in reviewed_snapshot.sources.items() if key in selected_templates
+    }
+    if selected_snapshots is not None and selected_files.keys() & selected_snapshots.keys():
+        raise ConfigError(
+            "ambiguous_source_input",
+            "同一模板不能同时使用审核快照和 --file-input",
+            "--file-input",
+        )
     generated = generate_batch(
         config,
         profile,
-        file_inputs=file_inputs,
-        loaded_inputs=None if reviewed_snapshot is None else reviewed_snapshot.sources,
+        file_inputs=selected_files,
+        loaded_inputs=selected_snapshots,
         source_snapshot_id=reviewed_snapshot_id,
     )
     selections = resolve_export_selections(config, generated, choices)

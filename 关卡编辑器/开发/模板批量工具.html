@@ -1,0 +1,29 @@
+<dialog class="template-tool" data-template-batch aria-labelledby="template-batch-title">
+  <header><h2 id="template-batch-title"></h2><button class="secondary-button" type="button" data-tool-close>关闭</button></header>
+  <form data-tool-form>
+    <label for="template-tool-ids" data-tool-id-label>模板 ID 或关卡 ID</label>
+    <textarea id="template-tool-ids" rows="6" placeholder="每行一个 ID，或粘贴两列：xkd141  15|3|100|4"></textarea>
+    <label for="template-tool-files">上传模板文件</label>
+    <input id="template-tool-files" type="file" accept=".bytes" multiple>
+    <details data-tool-config>
+      <summary>关卡配置与配牌参数</summary>
+      <label for="template-tool-config">导入参数 CSV 或 config_level CSV</label>
+      <input id="template-tool-config" type="file" accept=".csv,text/csv">
+      <label><input type="checkbox" data-tool-auto checked> 从本机关卡配置查找未手填参数的模板</label>
+      <small>参数 CSV 使用「模板 ID、配牌参数」两列。手填参数优先，重复行分别处理。</small>
+    </details>
+    <fieldset data-tool-shot>
+      <legend>截图样式</legend>
+      <label><input type="radio" name="shot-style" value="pattern" checked> 带图案</label>
+      <label><input type="radio" name="shot-style" value="plain"> 不带图案</label>
+    </fieldset>
+    <button class="primary-button" type="submit" data-tool-run></button>
+  </form>
+  <p data-tool-status role="status"></p>
+  <button class="secondary-button" type="button" data-tool-open-folder hidden>打开截图文件夹</button>
+  <ul class="batch-errors" data-tool-errors></ul>
+  <section data-tool-results hidden>
+    <div class="template-tool-actions"><button class="secondary-button" type="button" data-tool-back>返回输入</button><button class="primary-button" type="button" data-tool-csv>导出 CSV</button></div>
+    <div class="template-table" tabindex="0" role="region" aria-label="模板数据"><table></table></div>
+  </section>
+</dialog>

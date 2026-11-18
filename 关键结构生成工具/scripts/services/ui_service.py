@@ -46,6 +46,36 @@ TRACE_SCOPE = {
 }
 
 
+def candidate_review_payload(generated: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep board replay and rendered metrics without duplicating audit traces."""
+    payload = dict(generated)
+    candidate = dict(payload["candidate"])
+    payload["candidate"] = candidate
+    experience = dict(candidate.get("experience_analysis") or {})
+    for key in ("special_presets", "experience_signature_evidence", "composite_cluster_graph"):
+        experience.pop(key, None)
+    if "experience_analysis" in candidate:
+        candidate["experience_analysis"] = experience
+    difficulty = dict(candidate.get("difficulty_simulation") or {})
+    difficulty.pop("source_duplicates", None)
+    if "duplicates" in difficulty:
+        duplicates = []
+        for duplicate in difficulty["duplicates"]:
+            row = dict(duplicate)
+            row.pop("whole_board_reveal", None)
+            if "strategies" in row:
+                row["strategies"] = {
+                    key: {k: v for k, v in values.items() if k != "reveal_curve"}
+                    if isinstance(values, Mapping) else values
+                    for key, values in row["strategies"].items()
+                }
+            duplicates.append(row)
+        difficulty["duplicates"] = duplicates
+    if "difficulty_simulation" in candidate:
+        candidate["difficulty_simulation"] = difficulty
+    return payload
+
+
 def _tile_type(tile_id: int) -> str:
     if tile_id == A_TILE:
         return "A"
@@ -365,6 +395,7 @@ def _simulation_payload(
         "failure_reachable": (
             None if capacity_proof is None else capacity_proof.failure_reachable
         ),
+        "witness_only": bool(capacity_proof and capacity_proof.witness_only),
         "minimum_failure_click": (
             None if capacity_proof is None else capacity_proof.minimum_failure_click
         ),

@@ -66,7 +66,7 @@ test("uploaded history range is distinct from the built-in consumption model ran
   assert.match(copy,/CSV.*300.*400/);
   assert.match(copy,/内置.*200.*300/);
   assert.match(copy,/仅按模拟排序/);
-  assert.match(copy,/不代表.*消耗.*匹配/);
+  assert.match(copy,/仅按模拟排序.*人工复核/);
   assert.doesNotMatch(copy,/现有测试数据仅覆盖/);
   assert.ok(copy.length < 160);
 });
@@ -158,8 +158,11 @@ test("parameter draft export retains the model version and source-target assumpt
   const start = source.indexOf("  function downloadCalibrationDraftCsv(");
   const finish = source.indexOf("  function switchParameterSource(", start);
   const download = Function("state","consumptionCalibrationFingerprint","downloadCsvFile",`const formatCalibrationNumber=n=>String(n);${source.slice(begin,end)}${source.slice(start,finish)}return downloadCalibrationDraftCsv;`)(state,()=>"current",(headers,rows)=>{csv={headers,rows};});
-  download();
+  const writeDraft = () => download(state.consumptionCalibrationResult, ["newv1list303r1"], "批量描述");
+  writeDraft();
   const cell = name => csv.rows[0][csv.headers.indexOf(name)];
+  assert.equal(cell("LevelId"), "newv1list303r1");
+  assert.equal(cell("Des"), "批量描述");
   assert.equal(cell("DupPara1"),"9|10|100|9");
   assert.equal(cell("预估方式"),"跨关段预估");
   assert.equal(cell("消耗模型版本"),"consumption-structure-correction-s5-200-300-v1");
@@ -167,10 +170,10 @@ test("parameter draft export retains the model version and source-target assumpt
   assert.equal(cell("加工源消耗按本次目标_假设"),"是");
   assert.equal(csv.rows[0].length,csv.headers.length);
   state.consumptionCalibrationResult.rows[0].duplicates[0].expected_consumption = {value:null,estimate_mode:"unavailable",model_id:"consumption-structure-correction-s5-200-300-v1",structure_correction:{applied:false}};
-  download();
+  writeDraft();
   assert.equal(cell("预估方式"),"未预估");
   assert.equal(cell("消耗模型版本"),"consumption-structure-correction-s5-200-300-v1");
   state.consumptionCalibrationResult.rows[0].duplicates = [];
-  download();
+  writeDraft();
   assert.equal(cell("消耗模型版本"),"consumption-structure-correction-s5-200-300-v1");
 });

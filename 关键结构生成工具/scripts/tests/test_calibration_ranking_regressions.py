@@ -124,7 +124,7 @@ class CalibrationRankingRegressions(unittest.TestCase):
         writer = csv.writer(stream)
         writer.writerow(["level_template_id", "level_dup", "level_dup_para_id",
                          "strategy_group_id", "进入人数", "人均消耗", "level_index"])
-        writer.writerows(["hr0010", "12|1|100|6", index, 1003, 100, 500, 334]
+        writer.writerows(["hr0010", "all_para", index, 1003, 100, 500, 334]
                          for index in range(1, 11))
 
         def baseline(_profile, manifests, **_kwargs):

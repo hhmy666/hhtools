@@ -19,6 +19,37 @@ from puzzle_core.errors import InputValidationError
 
 
 class CalibrationConfigWriteServiceTests(unittest.TestCase):
+    def test_same_template_distinct_history_levels_save_and_retry_independently(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = root / "config" / "csv"
+            config.mkdir(parents=True)
+            (config / "config_level_list.csv").write_text("LevelIndex,LevelId\n439,level439\n545,level545\n")
+            header = ["LevelId", "TemplateId", "Marker", *write_service.DUP_COLUMNS]
+            rows = [
+                ["level439", "source", "first", *(["6|1|100|4"] * 10)],
+                ["level545", "source", "second", *(["8|2|100|4"] * 10)],
+            ]
+            with (config / "config_level.csv").open("w", newline="") as stream:
+                csv.writer(stream).writerows([header, *rows])
+            profile = Profile("p", "test", None, None, str(root / "out"), str(config.parent))
+            draft = [
+                {"source_template_id": "source", "output_template_id": "aipuzzlesource",
+                 "level_ids": [source[0]], "history_level_id": source[0], "history_level_split": True,
+                 "duplicates": [{"duplicate_index": index, "recommended_dup": source[3]} for index in range(1, 11)]}
+                for source in rows
+            ]
+            with patch.object(write_service, "TOOL_ROOT", root / "tool"):
+                first = write_calibration_config(profile, config_set_id="csv", calibration_rows=draft)
+                second = write_calibration_config(profile, config_set_id="csv", calibration_rows=draft[1:])
+            self.assertEqual(first["appended_count"], 2)
+            self.assertEqual(second["replaced_count"], 1)
+            with (config / "config_level.csv").open(encoding="utf-8-sig") as stream:
+                saved = list(csv.DictReader(stream))
+            self.assertEqual([(row["Marker"], row["DupPara1"]) for row in saved[2:]],
+                             [("first", "6|1|100|4"), ("second", "8|2|100|4")])
+            self.assertEqual(len({row["LevelId"] for row in saved}), 4)
+
     def test_appends_reviewed_row_preserving_source_and_creating_backup(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -188,6 +219,63 @@ class ConfigRepositoryBoundaryTests(unittest.TestCase):
         self.assertEqual(Path(first["backup_path"]).read_bytes(), self.original["csv/config_level.csv"])
         self.assertEqual(Path(second["backup_path"]).read_bytes(), before_second)
         self.assertEqual(len(list(self.config_root.rglob("*.bak.*"))), 1)
+
+    def test_naming_modes_use_the_expected_identifier(self):
+        row = {**self.rows[0], "history_level_id": "202"}
+        cases = [
+            ({"mode": "original_level"}, "newv1202"),
+            ({"mode": "output_template"}, "newv1aipuzzlesources5"),
+            ({"mode": "custom_template", "prefix": "test_", "suffix": "_lo"}, "test_source_lo"),
+            ({"mode": "custom_template", "suffix": "_lo"}, "source_lo"),
+            ({"mode": "custom_level", "prefix": "test_"}, "test_202"),
+        ]
+        for naming, expected in cases:
+            result = write_calibration_config(
+                self.profile, config_set_id="csv", calibration_rows=[row],
+                naming=naming, preview=True,
+            )
+            self.assertEqual(result["level_ids"], [expected])
+        self.assertEqual(self.snapshot(), self.original)
+        self.assertFalse(list(self.tool_root.rglob("*.bak")))
+
+    def test_named_rows_avoid_existing_and_in_batch_ids(self):
+        with self.level_path.open("a", newline="") as stream:
+            csv.writer(stream).writerow(["newv1202", "other", *(["3|1|100|3"] * 10)])
+        rows = [{**self.rows[0], "history_level_id": "202"},
+                {**self.rows[0], "history_level_id": "202", "output_template_id": "aipuzzlesources6"}]
+        args = dict(config_set_id="csv", calibration_rows=rows, naming={"mode": "original_level"})
+        preview = write_calibration_config(self.profile, preview=True, **args)
+        self.assertEqual(preview["level_ids"], ["newv1202v2", "newv1202v3"])
+        written = write_calibration_config(self.profile, **args)
+        self.assertEqual(written["level_ids"], preview["level_ids"])
+        self.assertEqual(written["appended_count"], 2)
+        with self.level_path.open(encoding="utf-8-sig", newline="") as stream:
+            saved = list(csv.DictReader(stream))
+        self.assertEqual([row["LevelId"] for row in saved], ["202", "newv1202", "newv1202v2", "newv1202v3"])
+        self.assertEqual(saved[1]["TemplateId"], "other")
+
+    def test_custom_naming_requires_an_affix(self):
+        with self.assertRaisesRegex(InputValidationError, "前缀或后缀"):
+            write_calibration_config(
+                self.profile, config_set_id="csv", calibration_rows=self.rows,
+                naming={"mode": "custom_level"}, preview=True,
+            )
+
+    def test_batch_description_applies_only_to_appended_rows(self):
+        with self.level_path.open("w", encoding="utf-8-sig", newline="") as stream:
+            csv.writer(stream).writerows([
+                ["LevelId", "Des", "TemplateId", *write_service.DUP_COLUMNS],
+                ["202", "原描述", "source", *(["9|1|100|9"] * 10)],
+            ])
+        args = dict(
+            config_set_id="csv", calibration_rows=self.rows,
+            naming={"mode": "output_template"},
+        )
+        write_calibration_config(self.profile, **args)
+        write_calibration_config(self.profile, description="批量,测试", **args)
+        with self.level_path.open(encoding="utf-8-sig", newline="") as stream:
+            saved = list(csv.DictReader(stream))
+        self.assertEqual([row["Des"] for row in saved], ["原描述", "原描述", "批量,测试"])
 
     def test_backup_failure_does_not_modify_config(self):
         with patch.object(write_service.shutil, "copy2", side_effect=PermissionError("backup denied")):

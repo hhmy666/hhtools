@@ -37,13 +37,22 @@
     seed: "",
     seedWasAutoResolved: false,
     jobId: null,
+    playerEstimates: new Map(),
+    playerEstimateRequests: new Map(),
+    playerEstimateQueue: [],
+    playerEstimateRunning: false,
+    bulkSelectionRun: null,
+    bulkSelectionsByJob: new Map(),
+    bulkReviewOrder: null,
     jobResult: null,
     jobSnapshot: null,
     jobStartedAt: null,
     jobPollTimer: null,
     jobPollFailures: 0,
+    jobPollToken: 0,
     jobRecommendationPollAttempts: 0,
     jobLoadToken: 0,
+    taskJobSummaries: new Map(),
     taskControlsPending: new Set(),
     sourceLayerViews: new Map(),
     taskSourceItem: null,
@@ -66,6 +75,7 @@
     exportPollTimer: null,
     exportPollFailures: 0,
     exportLoadToken: 0,
+    exportLaunches: new Map(),
     confirmAction: null,
     confirmTrigger: null,
     candidateOverviewOpened: false,
@@ -90,7 +100,6 @@
     lastParameterSuggestionUndo: null,
     resumeBudgetMultiplier: null,
     parameterEntryPreferRecent: false,
-    defaultConfigSetId: "",
     calibrationSource: "output_ids",
     calibrationFiles: [],
     calibrationSelectionId: null,
@@ -98,11 +107,14 @@
     calibrationNameMatchToken: 0,
     calibrationNameMatchTimer: null,
     calibrationNameMatchReady: false,
+    calibrationNameOverrides: {},
+    calibrationNameEdits: new Map(),
     calibrationResolveToken: 0,
     adjustmentContext: null,
     stagedTemplateAdjustments: new Map(),
     runningAdjustmentKeys: new Set(),
     adjustmentDialog: null,
+    selectedRetryRecommendations: new Map(),
     adjustmentRunToken: 0,
     adjustmentRunPending: false,
   };
@@ -308,18 +320,21 @@
   function selectionsForJob(jobId) {
     if (state.selectionsByJob.has(jobId)) return state.selectionsByJob.get(jobId);
     let values = {};
+    let bulkKeys = [];
     try {
-      const raw = window.localStorage.getItem(selectionStorageKey(jobId));
-      if (raw !== null) values = JSON.parse(raw)?.values || {};
+      const raw = JSON.parse(window.localStorage.getItem(selectionStorageKey(jobId)));
+      values = raw?.values || {};
+      if (Array.isArray(raw?.bulkKeys)) bulkKeys = raw.bulkKeys;
     } catch { values = {}; }
     const map = new Map(Object.entries(values).map(([key, value]) => [key, normalizeSelectedCandidateIds(value)]));
     state.selectionsByJob.set(jobId, map);
+    state.bulkSelectionsByJob.set(jobId, new Set(bulkKeys.filter(key => map.get(key)?.length === 1)));
     return map;
   }
   function persistSelections(jobId = state.jobId) {
     if (!jobId) return;
     const map = state.selectionsByJob.get(jobId) || state.selectedCandidates;
-    try { window.localStorage.setItem(selectionStorageKey(jobId), JSON.stringify({ values: Object.fromEntries(map) })); } catch { /* Browser privacy mode may disable persistence. */ }
+    try { window.localStorage.setItem(selectionStorageKey(jobId), JSON.stringify({ values: Object.fromEntries(map), bulkKeys: [...(state.bulkSelectionsByJob.get(jobId) || [])] })); } catch { /* Browser privacy mode may disable persistence. */ }
   }
   function selectedIdsForWork(itemOrKey) {
     const key = typeof itemOrKey === "string" ? itemOrKey : workKey(itemOrKey);
@@ -402,6 +417,7 @@
     $$('[data-adjustment-run-control], [data-run-staged-template]').forEach((button) => {
       button.disabled = state.adjustmentRunPending;
     });
+    syncRecommendationBatchControls();
   }
   function beginAdjustmentRun(parentJobId) {
     if (state.adjustmentRunPending) return null;
@@ -461,18 +477,32 @@
 
   async function api(path, options = {}) {
     const request = { method: options.method || "GET", headers: { Accept: "application/json" } };
+    const controller = options.timeoutMs ? new AbortController() : null;
+    const timeout = controller && window.setTimeout(() => controller.abort(), options.timeoutMs);
+    if (controller) request.signal = controller.signal;
     if (request.method !== "GET") {
       request.headers["Content-Type"] = "application/json";
       request.headers["X-CSRF-Token"] = state.csrf;
       request.body = JSON.stringify(options.body || {});
     }
-    let response;
+    let response, payload;
     try {
       response = await fetch(`${API_ROOT}${path}`, request);
+      try {
+        payload = await response.json();
+      } catch {
+        throw new Error("服务响应不完整或无法解析，正在保留当前任务结果。");
+      }
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        throw new Error("服务未返回有效数据，正在保留当前任务结果。");
+      }
     } catch (error) {
+      if (controller?.signal.aborted) throw new Error("等待本地服务响应超时，请重试。");
       throw new Error("无法连接本地服务，请从启动工具重新打开页面。");
+    } finally {
+      if (timeout) window.clearTimeout(timeout);
     }
-    const payload = await response.json().catch(() => ({}));
+    if (controller?.signal.aborted) throw new Error("等待本地服务响应超时，请重试。");
     if (!response.ok || payload.ok === false) {
       const detail = payload.error || {};
       const suffix = detail.path ? `（${detail.path}）` : "";
@@ -984,7 +1014,36 @@
     return hits;
   }
 
-  function openHelpTarget(targetId, behavior = "smooth") {
+  function markHelpTarget(target, terms) {
+    const patterns = terms.filter(Boolean).sort((a, b) => b.length - a.length)
+      .map(term => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    if (!target || !patterns.length) return null;
+    const matcher = new RegExp(patterns.join("|"), "giu");
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    let firstMark = null;
+    for (const node of nodes) {
+      const fragment = document.createDocumentFragment();
+      let end = 0;
+      for (const match of node.data.matchAll(matcher)) {
+        fragment.append(node.data.slice(end, match.index));
+        const mark = document.createElement("mark");
+        mark.dataset.helpSearchMark = "";
+        mark.textContent = match[0];
+        fragment.append(mark);
+        firstMark ||= mark;
+        end = match.index + match[0].length;
+      }
+      if (end) {
+        fragment.append(node.data.slice(end));
+        node.replaceWith(fragment);
+      }
+    }
+    return firstMark;
+  }
+
+  function openHelpTarget(targetId, behavior = "smooth", terms = []) {
     const dialog = $("#help-dialog");
     if (!dialog) return;
     if (!dialog.open) {
@@ -995,12 +1054,32 @@
     if (search) search.value = "";
     filterHelpTopics("");
     const target = document.getElementById(targetId) || $(`[data-help-target="${targetId}"]`) || $("#help-start");
-    target?.scrollIntoView({ behavior, block: "start" });
-    setActiveHelpTopic(target?.closest?.("[data-help-topic]")?.id || target?.id || "help-start");
-    $("#help-content")?.focus({ preventScroll: true });
+    const firstMark = markHelpTarget(target, terms);
+    if (terms.length) {
+      for (let detail = (firstMark || target)?.closest("details"); detail; detail = detail.parentElement?.closest("details")) {
+        if (!detail.open) {
+          detail.open = true;
+          detail.dataset.helpSearchOpened = "true";
+        }
+      }
+    }
+    const content = $("#help-content");
+    content?.focus({ preventScroll: true });
+    window.requestAnimationFrame(() => {
+      const destination = firstMark || target;
+      if (!dialog.open || !destination?.isConnected || !content) return;
+      const offset = destination.getBoundingClientRect().top - content.getBoundingClientRect().top;
+      content.scrollTo({ top: content.scrollTop + offset - 48, behavior });
+      setActiveHelpTopic(target?.closest?.("[data-help-topic]")?.id || target?.id || "help-start");
+    });
   }
 
   function filterHelpTopics(rawQuery) {
+    $$("[data-help-search-mark]").forEach(mark => {
+      const parent = mark.parentNode;
+      mark.replaceWith(document.createTextNode(mark.textContent));
+      parent?.normalize();
+    });
     const search = helpSearchTerms(rawQuery);
     const hits = renderHelpSearchResults(search);
     const matchedTopics = new Set(hits.map((hit) => document.getElementById(hit.targetId)?.closest?.("[data-help-topic]")?.id).filter(Boolean));
@@ -1121,6 +1200,7 @@
     state.pendingUsePartialReview = false;
     state.adjustmentContext = null;
     state.stagedTemplateAdjustments = new Map();
+    state.selectedRetryRecommendations.clear();
     state.runningAdjustmentKeys = new Set();
     state.adjustmentDialog = null;
     const scopeLabel = $(".template-adjustment-heading .soft-label");
@@ -1131,7 +1211,7 @@
     state.parameterCalculationToken += 1;
     state.parameterSelectionId = null;
     state.parameterSelectionContext = null;
-    state.exportLoadToken += 1; state.exportId = null; state.exportSnapshot = null; state.exportStartedAt = null; state.exportPollFailures = 0;
+    resetExportViewContext();
     state.completedSteps = new Set(); state.currentFlow = 1; state.unlockedFlow = 1;
     $("#template-ids").value = ""; $("#template-id-count").textContent = "已输入 0 项";
     $("#template-files").value = ""; $("#template-file-list").replaceChildren();
@@ -1813,8 +1893,7 @@
     return { index: 0, copy: job?.status === "queued" ? "等待任务开始" : "准备任务" };
   }
   function renderGenerationProgress(job) {
-    $(".generation-hero").classList.toggle("is-hidden", job.status === "completed");
-    $("#collapse-candidates").classList.toggle("is-hidden", job.status === "completed");
+    if (!job?.job_id || !job.status || (state.jobId && job.job_id !== state.jobId)) return;
     const sourcePanel = $("#task-source-preview");
     if (sourcePanel?.dataset.jobId && sourcePanel.dataset.jobId !== job.job_id) {
       state.sourcePreviewToken++; state.taskSourceItem = null;
@@ -1826,9 +1905,11 @@
     const availableResult = availableResultForJob(job);
     const resultItems = availableResult?.items || [];
     const retainedCandidateCount = resultItems.reduce((sum, item) => sum + (item.candidates?.length || 0), 0);
-    const searchFound = availableResult
-      ? retainedCandidateCount
-      : Number(job.search?.candidate_found_count ?? 0);
+    const searchFound = Number(job.search?.candidate_found_count ?? retainedCandidateCount);
+    const completedWithDetails = job.status === "completed" && resultItems.length >= total
+      && retainedCandidateCount >= searchFound;
+    $(".generation-hero").classList.toggle("is-hidden", completedWithDetails);
+    $("#collapse-candidates").classList.toggle("is-hidden", completedWithDetails);
     const searchTarget = Number(job.search?.candidate_target_count);
     const hasCandidateTarget = Number.isFinite(searchFound) && Number.isFinite(searchTarget) && searchTarget > 0;
     const percent = hasCandidateTarget
@@ -1875,10 +1956,7 @@
     $("#generation-completed-count").textContent = String(displayCompleted);
     $("#generation-pending-count").textContent = String(displayPending);
     $("#generation-failure-count").textContent = String(displayFailures);
-    const generatedCandidateCount = availableResult?.items
-      ? availableResult.items.reduce((sum, item) => sum + (item.candidates?.length || 0), 0)
-      : (job.events || []).filter((event) => event.type === "work_item_progress").reduce((sum, event) => sum + Number(event.details?.candidate_count || 0), 0);
-    $("#generation-candidate-count").textContent = String(generatedCandidateCount);
+    $("#generation-candidate-count").textContent = String(searchFound);
     $("#generation-phase-copy").textContent = phase.copy;
     const elapsed = effectiveTaskElapsed(job);
     $("#generation-elapsed-inline").textContent = formatDuration(elapsed);
@@ -1953,7 +2031,7 @@
     const showSourceActions = !canResumeUnfinished &&
       ["paused", "partial", "failed", "cancelled"].includes(job.status);
     sourceActions.classList.toggle("is-hidden", !showSourceActions);
-    sourceActions.replaceChildren(...(showSourceActions ? [createUnfinishedSourceList(resultItems)] : []));
+    sourceActions.replaceChildren(...(showSourceActions ? [createUnfinishedSourceList(unfinishedJobRows(job, resultItems))] : []));
     recovery.classList.toggle("is-hidden", !deterministic.length);
     recovery.dataset.action = "adjust";
     recovery.innerHTML = `${icon("sliders")}<span>调整失败模板参数</span>`;
@@ -2005,7 +2083,8 @@
       || item?.error?.evidence?.proven_infeasible === true
     ) return "parameter_conflict";
     if (
-      code === "NO_VALID_CANDIDATE"
+      explicit === "budget_exhausted"
+      || code === "NO_VALID_CANDIDATE"
       || /BUDGET|SEARCH_LIMIT|TIMEOUT|EXHAUSTED/.test(code)
       || message.includes("搜索预算")
       || message.includes("当前预算")
@@ -2152,10 +2231,11 @@
     const fallbackRecommendedAttempts = entries.length
       ? budgetAttemptRange(entries.map((entry) => ({ value: Number(entry.base_attempt_budget || 0) * recommended })), "value")
       : "—";
-    const budgetExhausted = (availableResultForJob(job)?.items || []).some(isBudgetFailure);
+    const budgetExhausted = (budget.resume_items || availableResultForJob(job)?.items || []).some(isBudgetFailure);
     const currentMultiplier = Math.max(1, Math.round(Number(search.attempt_budget_multiplier ?? budget.current_multiplier ?? 1)));
     const minimumMultiplier = budgetExhausted ? Math.min(limit, currentMultiplier + 1) : 1;
-    const selected = clamp(Math.round(Number(state.resumeBudgetMultiplier || recommended)), minimumMultiplier, limit);
+    const previousSelection = Number(state.resumeBudgetMultiplier);
+    const selected = clamp(Math.round(previousSelection >= minimumMultiplier ? previousSelection : recommended), minimumMultiplier, limit);
     state.resumeBudgetMultiplier = selected;
     const section = document.createElement("section");
     section.className = `search-budget-card${options.compact ? " is-compact" : ""}`;
@@ -2182,7 +2262,7 @@
       term.textContent = termCopy; row.append(term, detail); facts.append(row); factRows.set(key, detail);
     });
     const resultItems = availableResultForJob(job)?.items || [];
-    section.append(createUnfinishedSourceList(resultItems));
+    section.append(createUnfinishedSourceList(unfinishedJobRows(job, resultItems), entries));
     const controls = document.createElement("div"); controls.className = "search-budget-controls";
     const label = document.createElement("label"); label.textContent = "下一轮累计预算档位";
     const select = document.createElement("select"); select.setAttribute("data-resume-budget", ""); select.setAttribute("aria-label", "选择下一轮每个成品项的累计预算档位");
@@ -2229,9 +2309,32 @@
     if (!visible) { root.replaceChildren(); return; }
     root.replaceChildren(createSearchBudgetPanel(job));
   }
-  function createUnfinishedSourceList(items) {
+  function unfinishedJobRows(job, items) {
+    const resume = job?.search?.budget?.resume_items;
+    if (!Array.isArray(resume)) {
+      return items.filter((item) => itemNeedsMoreCandidates(item) || !item.candidates?.length);
+    }
+    const byKey = new Map(items.map((item) => [JSON.stringify([item.template_key, item.plan_id]), item]));
+    return resume.map((entry) => {
+      const item = byKey.get(JSON.stringify([entry.template_key, entry.plan_id]));
+      const cached = itemCandidateProgress(item);
+      const target = entry.candidate_target_count ?? cached.target;
+      const found = entry.candidate_found_count ?? (target === null
+        ? (["pending", "failed", "cancelled"].includes(entry.status) ? 0 : null)
+        : Math.max(0, target - entry.unfinished_candidate_slots));
+      return {
+        ...item, ...entry,
+        error: item?.status === entry.status ? item.error : undefined,
+        candidates: item?.candidates,
+        candidate_progress: { found, target },
+        summary_only: !item,
+      };
+    });
+  }
+  function createUnfinishedSourceList(items, budgetItems = []) {
+    const budgets = new Map(budgetItems.map((item) => [JSON.stringify([item.template_key, item.plan_id]), item]));
     const list = document.createElement("ul"); list.className = "search-budget-progress-list";
-    items.filter((item) => itemNeedsMoreCandidates(item) || !item?.candidates?.length).forEach((item) => {
+    items.forEach((item) => {
       const progress = itemCandidateProgress(item); const row = document.createElement("li");
       const scopeCopy = [item.template_key, item.plan_signature || item.plan_id].filter(Boolean).join(" · ");
       const name = document.createElement("span"); name.textContent = scopeCopy;
@@ -2240,7 +2343,12 @@
       source.dataset.viewSource = item.template_key; source.textContent = "查看原模板";
       source.setAttribute("aria-label", `查看 ${scopeCopy} 原模板`);
       const count = document.createElement("strong");
-      count.textContent = `已找到 ${progress.found}${progress.target !== null ? ` / ${progress.target}` : ""} 个候选`;
+      const budget = budgets.get(JSON.stringify([item.template_key, item.plan_id]));
+      const attempts = Number.isFinite(budget?.attempts_completed)
+        ? ` · 已尝试 ${compactInteger(budget.attempts_completed)} / ${compactInteger(budget.current_attempt_budget)} 次` : "";
+      count.textContent = (item.summary_only && item.candidate_progress?.found == null
+        ? "候选数量待同步"
+        : `已找到 ${progress.found}${progress.target !== null ? ` / ${progress.target}` : ""} 个候选`) + attempts;
       actions.append(source, count); row.append(name, actions); list.append(row);
     });
     return list;
@@ -2745,6 +2853,36 @@
     if (!draft || draft.recommendationId !== recommendationId || draft.source !== "remote" || !draft.batchRequest) return;
     await regenerateFromParameterDraft(trigger);
   }
+  function selectedRetryRecommendations() {
+    const unfinished = new Set(unfinishedCandidateItems().map(candidateAdjustmentKey));
+    return [...state.selectedRetryRecommendations.values()].filter(entry =>
+      entry.jobId === state.jobId && unfinished.has(entry.key));
+  }
+  function syncRecommendationBatchControls() {
+    const entries = selectedRetryRecommendations();
+    const selected = new Map(entries.map(entry => [entry.key, entry.recommendationId]));
+    $$('[data-retry-recommendation]').forEach(input => {
+      input.checked = selected.get(input.dataset.retryRecommendation) === input.value;
+      input.disabled = state.adjustmentRunPending;
+    });
+    $$('[data-run-selected-recommendations]').forEach(button => {
+      button.disabled = state.adjustmentRunPending || !entries.length;
+      if (button.dataset.isBusy !== "true") {
+        button.textContent = entries.length ? `按所选建议续跑（${entries.length} 项）` : "按所选建议续跑";
+      }
+    });
+  }
+  function addRecommendationBatchControls(stack) {
+    if (!stack.querySelector('[data-retry-recommendation]')) return;
+    const toolbar = document.createElement("div"); toolbar.className = "suggestion-actions recommendation-batch-actions";
+    const hint = document.createElement("span"); hint.textContent = "每个成品项可选一条建议";
+    const run = document.createElement("button"); run.type = "button"; run.className = "primary-button";
+    run.dataset.runSelectedRecommendations = "";
+    run.textContent = "按所选建议续跑";
+    run.addEventListener("click", () => runStagedTemplateAdjustments(selectedRetryRecommendations(), { trigger: run }));
+    toolbar.append(hint, run);
+    stack.prepend(toolbar);
+  }
   function createParameterSuggestionCard(item, suggestion) {
     const card = document.createElement("article"); card.className = "parameter-suggestion-card";
     const header = document.createElement("header");
@@ -2821,6 +2959,10 @@
       apply.textContent = "已应用到参数草案"; apply.disabled = true; actions.append(apply);
       const regenerate = document.createElement("button"); regenerate.type = "button"; regenerate.className = "primary-button";
       regenerate.textContent = activeDraft.source === "preflight" ? "使用建议并生成" : "用此参数重新生成";
+      if (!preflightId) {
+        regenerate.dataset.adjustmentRunControl = "";
+        regenerate.disabled = state.adjustmentRunPending;
+      }
       regenerate.addEventListener("click", () => regenerateFromParameterDraft(regenerate)); actions.append(regenerate);
       const undo = document.createElement("button"); undo.type = "button"; undo.className = "text-button"; undo.textContent = "撤销";
       undo.addEventListener("click", () => undoParameterSuggestion(undo)); actions.append(undo);
@@ -2833,6 +2975,8 @@
       if (!preflightId && backendCanApply) {
         const continueButton = document.createElement("button"); continueButton.type = "button"; continueButton.className = "primary-button";
         continueButton.textContent = "一键修改该参数并继续运行";
+        continueButton.dataset.adjustmentRunControl = "";
+        continueButton.disabled = state.adjustmentRunPending;
         continueButton.title = trialPassed === true
           ? "小预算试算已找到硬校验通过的候选"
           : "这是未验证的机会型修改，可能提高成功率，但不保证本轮一定找到候选";
@@ -2848,6 +2992,30 @@
     }
     card.append(header);
     if (entries.length) card.append(diffs);
+    const activeJob = ["queued", "running", "paused", "pause_requested", "cancel_requested"].includes(state.jobSnapshot?.status);
+    if (!preflightId && state.jobId && !activeJob && backendCanApply) {
+      const key = candidateAdjustmentKey(item);
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = recommendationId;
+      checkbox.dataset.retryRecommendation = key;
+      checkbox.setAttribute("aria-label", `选择 ${title.textContent} 批量续跑`);
+      const jobId = state.jobId;
+      const selected = document.createElement("label"); selected.className = "recommendation-batch-choice";
+      selected.append(checkbox, "加入批量续跑");
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) {
+          state.selectedRetryRecommendations.set(key, {
+            key, jobId, recommendationId, templateKey: item.template_key,
+            planId: item.plan_id, planSignature: item.plan_signature, sourcePlanId: item.source_plan_id,
+          });
+        } else if (state.selectedRetryRecommendations.get(key)?.recommendationId === recommendationId) {
+          state.selectedRetryRecommendations.delete(key);
+        }
+        syncRecommendationBatchControls();
+      });
+      actions.prepend(selected);
+    }
     card.append(context, actions);
     return card;
   }
@@ -3319,21 +3487,42 @@
     if (!operation) return;
     setBusy(trigger, true, selectedEntries.length === 1 ? "正在单独运行…" : "正在应用并继续…");
     try {
-      const batchRequest = batchRequestWithAdjustments(selectedEntries);
-      const preflight = await api("/plans/resolve", {
-        method: "POST",
-        body: { import_id: importId, batch_request: batchRequest },
-      });
-      if (!adjustmentRunContextIsCurrent(operation)) return;
-      if (preflight?.valid === false) {
-        const message = preflight?.error?.message || "独立参数仍有冲突，请继续调整后再运行。";
-        throw new Error(message);
+      const recommendationOverrides = [];
+      let batchRequest;
+      let scopes = retryScopes;
+      if (selectedEntries.every(entry => entry.recommendationId)) {
+        for (const entry of selectedEntries) {
+          const applied = await api(`/jobs/${encodeURIComponent(parentJobId)}/recommendations/apply`, {
+            method: "POST", body: { recommendation_id: entry.recommendationId },
+          });
+          if (!adjustmentRunContextIsCurrent(operation)) return;
+          const [override] = applied?.continue_request?.body?.parameter_overrides || [];
+          if (!override?.plan_id || override.template_key !== entry.templateKey
+              || (entry.sourcePlanId && entry.sourcePlanId !== override.plan_id)) {
+            throw new Error(`${entry.templateKey} 的建议已失效，请重新选择。`);
+          }
+          recommendationOverrides.push(override);
+        }
+        scopes = recommendationOverrides.map(({ template_key, plan_id }) => ({ template_key, plan_id }));
+      } else {
+        batchRequest = batchRequestWithAdjustments(selectedEntries);
+      }
+      if (batchRequest) {
+        const preflight = await api("/plans/resolve", {
+          method: "POST",
+          body: { import_id: importId, batch_request: batchRequest },
+        });
+        if (!adjustmentRunContextIsCurrent(operation)) return;
+        if (preflight?.valid === false) {
+          const message = preflight?.error?.message || "独立参数仍有冲突，请继续调整后再运行。";
+          throw new Error(message);
+        }
       }
       const createBody = {
         import_id: importId,
         parent_job_id: parentJobId,
-        batch_request: batchRequest,
-        ...derivedRetryScopeFields(retryScopes),
+        ...(batchRequest ? { batch_request: batchRequest } : { parameter_overrides: recommendationOverrides }),
+        ...derivedRetryScopeFields(scopes),
       };
       if (Number.isFinite(Number(options.multiplier))) {
         createBody.attempt_budget_multiplier = Math.max(1, Math.round(Number(options.multiplier)));
@@ -3357,7 +3546,8 @@
       persistSelections(state.jobId);
       selectedEntries.forEach((entry) => {
         const key = `${entry.templateKey}::${entry.planId || entry.planSignature || ""}`;
-        state.stagedTemplateAdjustments.delete(key);
+        if (entry.recommendationId) state.selectedRetryRecommendations.delete(key);
+        else state.stagedTemplateAdjustments.delete(key);
         state.runningAdjustmentKeys.add(key);
       });
       state.completedSteps.add(2);
@@ -3438,23 +3628,72 @@
       rankedApplicableParameterSuggestions(item).slice(0, 2)
         .forEach((suggestion) => suggestionStack.append(createParameterSuggestionCard(item, suggestion)));
     });
+    addRecommendationBatchControls(suggestionStack);
     if (suggestionStack.childElementCount) root.append(suggestionStack);
+    syncRecommendationBatchControls();
     if (jobRecommendationsPending(state.jobSnapshot)) {
       const pending = document.createElement("p"); pending.className = "parameter-suggestion-pending";
       pending.setAttribute("role", "status"); pending.textContent = "正在用小预算试算可行的参数修改，结果会自动更新…"; root.append(pending);
     }
   }
-  async function pollJob(jobId) {
+  async function readJobSummary(jobId) {
+    const history = await api("/jobs", { timeoutMs: 12000 });
+    return history.jobs?.find((entry) => entry.job_id === jobId && entry.status) || null;
+  }
+  async function readJobDetails(summary, isCurrent) {
+    const path = `/jobs/${encodeURIComponent(summary.job_id)}`;
+    const total = summary.result_item_count;
+    if (!Number.isInteger(total)) {
+      // The original service exposes only the whole result. Keep its summary
+      // visible even if that download is slow or fails.
+      const job = await api(path, { timeoutMs: 45000 });
+      if (job.job_id !== summary.job_id || !job.status) throw new Error("任务明细未返回。");
+      return job;
+    }
+    if (total === 0) return summary;
+    let result;
+    const items = [];
+    while (items.length < total && isCurrent()) {
+      const start = items.length;
+      const page = await api(`${path}/result?start=${start}&revision=${summary.revision}`, { timeoutMs: 15000 });
+      const rows = page.result?.items;
+      if (page.job_id !== summary.job_id || page.revision !== summary.revision || page.start !== start
+        || page.total_items !== total || !Array.isArray(rows) || !rows.length || rows.length > total - start) {
+        throw new Error("候选明细未完整返回。");
+      }
+      result ||= page.result;
+      items.push(...rows);
+    }
+    return { ...summary, result: { ...result, items } };
+  }
+  async function pollJob(jobId, initialSummary = null) {
+    if (state.jobPollTimer) window.clearTimeout(state.jobPollTimer);
+    const token = ++state.jobPollToken;
+    const isCurrent = () => state.jobId === jobId && state.jobPollToken === token;
+    let summary;
     try {
-      const job = await api(`/jobs/${encodeURIComponent(jobId)}`);
-      if (state.jobId !== jobId) return;
+      summary = initialSummary || await readJobSummary(jobId);
+      if (!isCurrent()) return;
+      if (!summary) throw new Error("本地服务未返回这项任务。");
+      const previous = state.jobSnapshot;
+      const cached = previous?.job_id === jobId && previous.revision === summary.revision ? previous.result : null;
+      renderGenerationProgress(cached ? { ...summary, result: cached } : summary);
+      if (!cached && Number(summary.search?.candidate_found_count) > availableCandidatesForJob(summary)) {
+        $("#generation-status-text").textContent = `后台状态：${statusLabel(summary.status)}。正在同步候选明细…`;
+      }
+      if (!$("#candidate-workspace")?.classList.contains("is-hidden")) {
+        renderCandidateBatchWarning();
+        renderCandidateTaskOverview();
+      }
+      const job = cached ? { ...summary, result: cached } : await readJobDetails(summary, isCurrent);
+      if (!isCurrent()) return;
       state.jobPollFailures = 0;
-      renderGenerationProgress(job);
+      if (!cached) renderGenerationProgress(job);
       if (["queued", "running", "pause_requested", "paused", "cancel_requested"].includes(job.status)) {
         const liveResult = availableResultForJob(job);
         if (liveResult) state.jobResult = liveResult;
-        if (!$("#candidate-workspace")?.classList.contains("is-hidden") && state.jobResult) {
-          initializeDefaultSelections();
+        if (!cached && state.currentFlow === 3 && !$("#candidate-workspace")?.classList.contains("is-hidden") && state.jobResult) {
+          restoreCandidateSelections();
           renderCandidateWorkspace();
         }
         state.jobPollTimer = window.setTimeout(() => pollJob(jobId), 900);
@@ -3462,6 +3701,9 @@
       }
       state.jobResult = availableResultForJob(job);
       state.runningAdjustmentKeys.clear();
+      // Keep the submitted choices and export panel intact when the generation
+      // worker reaches its terminal state during an export.
+      if (state.currentFlow === 4) return;
       if (state.jobResult?.batch_seed !== undefined) {
         state.seed = String(state.jobResult.batch_seed); state.seedWasAutoResolved = true; $("#batch-seed").value = state.seed;
       }
@@ -3480,19 +3722,21 @@
       const reviewWorkspaceVisible = ["#candidate-workspace", "#compare-workspace", "#focus-workspace"]
         .some((selector) => !$(selector).classList.contains("is-hidden"));
       if (reviewWorkspaceVisible && state.jobResult?.items?.length) {
-        initializeDefaultSelections();
+        restoreCandidateSelections();
         renderCandidateWorkspace();
       }
       if (finalizePartialReview) {
         state.pendingUsePartialReview = false;
         enterAvailableCandidateReview();
       } else if (successfulWorkItems().length && !offerTerminalChoice) {
-        initializeDefaultSelections();
+        restoreCandidateSelections();
         state.completedSteps.add(3);
+        if (job.exported) state.completedSteps.add(4);
         unlockFlow(4);
         renderCandidateWorkspace();
+        if (job.status === "completed" || !reviewWorkspaceVisible) $("#generation-state").classList.add("is-hidden");
         if (!reviewWorkspaceVisible) {
-          $("#generation-state").classList.add("is-hidden"); $("#candidate-workspace").classList.remove("is-hidden");
+          $("#candidate-workspace").classList.remove("is-hidden");
           setFlow(3);
         }
         const missingCount = (state.jobResult?.items || []).filter((item) => !item.candidates?.length).length;
@@ -3515,12 +3759,19 @@
         state.jobRecommendationPollAttempts = 0;
       }
     } catch (error) {
-      if (state.jobId !== jobId) return;
+      if (!isCurrent()) return;
+      if (error.code === "RESULT_REVISION_CHANGED") {
+        state.jobPollTimer = window.setTimeout(() => pollJob(jobId), 900);
+        return;
+      }
       state.jobPollFailures += 1;
       const delay = Math.min(10_000, 900 * (2 ** Math.min(state.jobPollFailures, 4)));
-      $("#generation-status-text").textContent = `连接暂时中断，后台任务可能仍在运行；${Math.ceil(delay / 1000)} 秒后自动重连。`;
+      $("#generation-status-text").textContent = summary
+        ? `后台状态：${statusLabel(summary.status)}。候选明细暂未同步，${Math.ceil(delay / 1000)} 秒后自动重试。`
+        : `连接暂时中断，${Math.ceil(delay / 1000)} 秒后自动重连。`;
       const health = $("#generation-health");
-      health.className = "health-chip failed"; health.innerHTML = "<i></i>连接中断";
+      health.className = summary ? "health-chip" : "health-chip failed";
+      health.innerHTML = summary ? "<i></i>明细待同步" : "<i></i>连接中断";
       if (state.jobPollFailures === 1) toast(error.message, "error");
       state.jobPollTimer = window.setTimeout(() => pollJob(jobId), delay);
     }
@@ -3621,7 +3872,7 @@
     state.activeWorkIndex = 0;
     state.candidatePage = 0;
     state.compareIds.clear();
-    initializeDefaultSelections();
+    restoreCandidateSelections();
     if (!["queued", "running", "paused", "pause_requested", "cancel_requested"].includes(state.jobSnapshot?.status)) state.completedSteps.add(3);
     unlockFlow(4);
     renderCandidateWorkspace();
@@ -3658,7 +3909,13 @@
     } finally { setBusy(trigger, false); }
   }
 
-  function successfulWorkItems() { return (state.jobResult?.items || []).filter((item) => item.candidates?.length); }
+  function successfulWorkItems() {
+    const items = (state.jobResult?.items || []).filter((item) => item.candidates?.length);
+    const order = state.bulkReviewOrder;
+    return order?.jobId && order.jobId === state.jobId
+      ? items.sort((left, right) => Number(order.unselected.has(workKey(right))) - Number(order.unselected.has(workKey(left))))
+      : items;
+  }
   function workKey(item) { return `${item.template_key}::${item.plan_id}`; }
   function activeWorkItem() {
     const items = successfulWorkItems(); state.activeWorkIndex = clamp(state.activeWorkIndex, 0, Math.max(0, items.length - 1)); return items[state.activeWorkIndex] || null;
@@ -4112,7 +4369,7 @@
         label: "规则结论未通过 · 可人工导出",
         shortLabel: "规则未通过",
         className: "warning",
-        reason: "该候选的结构或整盘规则结论未通过，不参与默认推荐；查看失败原因并人工确认后仍可导出。",
+        reason: "该候选的结构或整盘规则结论未通过，详情可在候选报告中查看。",
       };
     }
     if (difficulty.qualified === false || difficulty.trendOk === false) {
@@ -4124,7 +4381,7 @@
         label: "未达难度目标 · 可人工导出",
         shortLabel: "难度未达标",
         className: "warning",
-        reason: `未达到「${difficultyTargetCopy(difficulty.target)}」或副本由前向后变易要求；不参与默认推荐，查看结论并人工确认后仍可导出。`,
+        reason: `未达到「${difficultyTargetCopy(difficulty.target)}」或副本由前向后变易要求。`,
       };
     }
     if (experience.hardStatus === "proved") {
@@ -4135,12 +4392,12 @@
           autoEligible: false,
           manualOverrideRequired: true,
           status: evidenceMissing ? "inconclusive" : "difficulty_not_met",
-          label: evidenceMissing ? "非推荐 · 需人工确认" : "未达难度目标 · 可人工导出",
-          shortLabel: evidenceMissing ? "需人工确认" : "难度未达标",
+          label: evidenceMissing ? "难度证据不足" : "未达难度目标",
+          shortLabel: evidenceMissing ? "证据不足" : "难度未达标",
           className: "warning",
           reason: evidenceMissing
-            ? "尚未补齐 DupPara1–10 难度目标与梯度安全证据；不参与默认推荐，人工确认风险后仍可导出。"
-            : `未达到「${difficultyTargetCopy(difficulty.target)}」或副本由前向后变易要求；不参与默认推荐，人工确认后仍可导出。`,
+            ? "尚未补齐 DupPara1–10 难度目标与梯度安全证据。"
+            : `未达到「${difficultyTargetCopy(difficulty.target)}」或副本由前向后变易要求。`,
         };
       }
       if (difficultyEvidenceInconclusive) {
@@ -4149,10 +4406,10 @@
           autoEligible: false,
           manualOverrideRequired: true,
           status: "inconclusive",
-          label: "非推荐 · 需人工确认",
-          shortLabel: "需人工确认",
+          label: "难度证据不足",
+          shortLabel: "证据不足",
           className: "warning",
-          reason: "当前难度结论来自简化模拟牌面或未完成客户端牌面生成规则核验；不参与默认推荐，人工确认风险后仍可导出。",
+          reason: "当前难度结论来自简化模拟牌面，或客户端牌面生成规则尚未核验完整。",
         };
       }
       return {
@@ -4171,10 +4428,10 @@
       autoEligible: false,
       manualOverrideRequired: true,
       status: "inconclusive",
-      label: "非推荐 · 需人工确认",
-      shortLabel: "需人工确认",
+      label: "整盘证据不足",
+      shortLabel: "证据不足",
       className: "warning",
-      reason: "尚未补齐可复验的整盘可完成路径；不参与默认推荐，人工确认风险后仍可导出。",
+      reason: "尚未补齐可复验的整盘可完成路径。",
     };
   }
   function experienceArchetypeCopy(value) {
@@ -4554,9 +4811,31 @@
     const complete = rates.length === 5 && rates.every(value => value !== null);
     return { rows, rates, score: complete ? Math.round(rates.reduce((sum, value) => sum + value, 0) * 1e12) / 1e12 : null };
   }
-  function samplePassSummaryMarkup(generated) {
+  function playerWinRate(prediction) {
+    const rate = prediction?.naked_pass_probability;
+    return ["validated", "research"].includes(prediction?.status)
+      && Number.isInteger(prediction.trial_count) && prediction.trial_count >= 1000
+      && typeof rate === "number" && rate >= 0 && rate <= 1 ? rate : null;
+  }
+  function samplePassSummaryMarkup(generated, estimate = null) {
     const { rows } = candidateSamplePassModel(generated);
-    return `<section class="sample-pass-summary" aria-label="策略样本通过率"><dl class="sample-pass-grid">${rows.map(({ label, pass }) => `<div class="sample-pass-metric" title="${escapeHtml(label)}样本通过率"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(difficultyPercent(pass))}</dd></div>`).join("")}</dl></section>`;
+    const prediction = estimate || candidateDifficultyReport(generated).raw?.online_player_simulation;
+    const rate = playerWinRate(prediction);
+    const trials = prediction?.trial_count;
+    const hasEstimate = rate !== null;
+    const metrics = rows.map(({ label, pass }) =>
+      `<div class="sample-pass-metric" title="${escapeHtml(label)}样本通过率"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(difficultyPercent(pass))}</dd></div>`
+    );
+    const label = prediction?.status === "research" ? "裸胜试算" : "玩家裸胜";
+    const playerDetail = hasEstimate
+      ? `${trials} 份不同玩家的策略 · ${prediction.scenario_count || 10} 套配牌平均`
+      : prediction?.status === "unsupported"
+        ? "该牌面的塔或特殊牌机制尚未还原"
+        : "线上玩家预期裸胜率待标定";
+    const playerValue = hasEstimate ? difficultyPercent(rate)
+      : prediction?.status === "unsupported" ? "未覆盖" : "待标定";
+    metrics.push(`<div class="sample-pass-metric sample-pass-player" title="${escapeHtml(playerDetail)}"><dt aria-label="线上玩家预期裸胜率">${label}</dt><dd>${escapeHtml(playerValue)}</dd></div>`);
+    return `<section class="sample-pass-summary" aria-label="策略样本通过率与线上玩家预期裸胜率"><dl class="sample-pass-grid">${metrics.join("")}</dl></section>`;
   }
   function candidateRecommendation(item, generated) {
     // This is a sample preference, never a replacement for export validation.
@@ -4677,7 +4956,7 @@
     const riskParts = dedupeRiskCopy([riskIntro, spanCopy]);
     return { layout, risk: riskParts.join(" "), warnings: warnings.filter((warning) => !riskParts.some((part) => part.includes(warning) || warning.includes(part))) };
   }
-  function initializeDefaultSelections() {
+  function restoreCandidateSelections() {
     if (!state.jobId) return;
     state.selectedCandidates = selectionsForJob(state.jobId);
     let changed = false;
@@ -4691,8 +4970,8 @@
     [...state.selectedCandidates.entries()].forEach(([key, selectedIds]) => {
       const availableIds = availableByWork.get(key);
       if (!availableIds) {
-        const snapshotIncomplete = ["queued", "running", "paused", "pause_requested", "cancel_requested"].includes(state.jobSnapshot?.status)
-          && (state.jobResult?.items?.length || 0) < Number(state.jobSnapshot?.work_item_count || 0);
+        const total = Number(state.jobSnapshot?.work_item_count || state.jobSnapshot?.progress?.total_work_items || 0);
+        const snapshotIncomplete = (state.jobResult?.items?.length || 0) < total;
         if (snapshotIncomplete) return;
         state.selectedCandidates.delete(key);
         changed = true;
@@ -4706,21 +4985,106 @@
       state.selectedCandidates.set(key, validIds);
       changed = true;
     });
-    successfulWorkItems().forEach((item) => {
-      const key = workKey(item);
-      // A present key, including an empty list, is an explicit user choice.
-      // Only a newly successful work item receives the top recommendation.
-      if (state.selectedCandidates.has(key)) return;
-      if (["running", "pending"].includes(item.status)) return;
-      const candidates = [...(item.candidates || [])];
-      const recommendedFirst = candidates
-        .map((candidate) => ({ candidate, recommendation: candidateRecommendation(item, candidate) }))
-        .filter(({ recommendation }) => recommendation.recommended && recommendation.rank === 1)
-        .sort((left, right) => qualityScore(right.candidate) - qualityScore(left.candidate))[0]?.candidate;
-      const initial = recommendedFirst;
-      if (initial) { state.selectedCandidates.set(key, [candidateId(initial)]); changed = true; }
-    });
     if (changed) persistSelections(state.jobId);
+  }
+
+  function bulkCandidateWinner(rows, minimum, maximum, random = Math.random) {
+    const eligible = rows.filter(({ rate }) => rate !== null && rate >= minimum && rate <= maximum);
+    if (rows.length && rows.every(({ rate }) => rate !== null && rate > maximum)) {
+      const nearest = Math.min(...rows.map(({ rate }) => rate));
+      const tied = rows.filter(({ rate }) => rate === nearest);
+      return tied[Math.floor(random() * tied.length)].id;
+    }
+    const bestRate = Math.max(0, ...eligible.map(({ rate }) => rate));
+    const ranked = bestRate > 0 ? eligible.filter(({ rate }) => rate === bestRate)
+      : eligible.filter(({ rate }) => rate === 0);
+    if (bestRate > 0) return ranked[Math.floor(random() * ranked.length)].id;
+    const scored = ranked.map(row => ({ ...row, score: candidateSamplePassModel(row.candidate).score ?? 0 }));
+    const bestScore = Math.max(0, ...scored.map(({ score }) => score));
+    if (bestScore === 0) return null;
+    const tied = scored.filter(({ score }) => score === bestScore);
+    return tied[Math.floor(random() * tied.length)]?.id ?? null;
+  }
+
+  async function runBulkCandidateSelection(event) {
+    event.preventDefault();
+    if (state.bulkSelectionRun || !state.jobId) return;
+    const dialog = $("#bulk-selection-dialog");
+    const status = $("#bulk-selection-status");
+    const minimum = $("#bulk-selection-min").valueAsNumber;
+    const maximum = $("#bulk-selection-max").valueAsNumber;
+    if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || minimum < 0 || maximum > 100 || minimum > maximum) {
+      status.textContent = "请输入 0–100 之间的百分数，最低值须小于或等于最高值。";
+      return;
+    }
+    restoreCandidateSelections();
+    const jobId = state.jobId;
+    const selected = state.selectedCandidates;
+    const bulkKeys = state.bulkSelectionsByJob.get(jobId) || new Set();
+    const isManual = key => selected.has(key) && !bulkKeys.has(key);
+    const items = successfulWorkItems().filter(item => !isManual(workKey(item)));
+    const run = { jobId };
+    state.bulkSelectionRun = run;
+    const isCurrent = () => state.bulkSelectionRun === run && state.jobId === jobId && dialog.open;
+    const button = $("#apply-bulk-selection");
+    setBusy(button, true, "筛选中…");
+    try {
+      const decisions = new Map();
+      const aboveRange = new Set();
+      let unavailable = 0;
+      for (const [index, item] of items.entries()) {
+        if (!isCurrent()) return;
+        status.textContent = `正在比较第 ${index + 1} / ${items.length} 项候选的裸胜率…`;
+        const candidates = item.candidates.filter(candidate => candidateExportEligibility(candidate).eligible);
+        const rows = await Promise.all(candidates.map(async candidate => {
+          const id = candidateId(candidate);
+          const embedded = candidateDifficultyReport(candidate).raw?.online_player_simulation;
+          const rate = playerWinRate(embedded) ?? playerWinRate(await requestPlayerEstimate(jobId, id));
+          return { id, candidate, rate };
+        }));
+        if (rows.some(({ rate }) => rate === null)) unavailable += 1;
+        const selectedId = bulkCandidateWinner(rows, minimum / 100, maximum / 100);
+        if (rows.some(({ id, rate }) => id === selectedId && rate > maximum / 100)) aboveRange.add(workKey(item));
+        decisions.set(workKey(item), selectedId);
+      }
+      if (!isCurrent()) return;
+      const previousWork = activeWorkItem();
+      const currentItems = new Map(successfulWorkItems().map(item => [workKey(item), item]));
+      let picked = 0;
+      let pickedAboveRange = 0;
+      for (const [key, id] of decisions) {
+        if (isManual(key)) continue;
+        if (id && currentItems.get(key)?.candidates.some(candidate => candidateId(candidate) === id && candidateExportEligibility(candidate).eligible)) {
+          selected.set(key, [id]);
+          bulkKeys.add(key);
+          picked += 1;
+          if (aboveRange.has(key)) pickedAboveRange += 1;
+        } else if (bulkKeys.delete(key)) {
+          selected.delete(key);
+        }
+      }
+      state.bulkSelectionsByJob.set(jobId, bulkKeys);
+      const unselected = new Set([...currentItems.keys()].filter(key => !selectedIdsForWork(key).length));
+      state.bulkReviewOrder = { jobId, unselected };
+      persistSelections(jobId);
+      if (selectedCandidateCount()) unlockFlow(4, { preserveScroll: true });
+      dialog.close();
+      if (unselected.size) {
+        setActiveWork(0);
+        $("#work-item-tabs").scrollLeft = 0;
+      } else {
+        if (previousWork) state.activeWorkIndex = Math.max(0, successfulWorkItems().indexOf(previousWork));
+        renderCandidateWorkspace();
+      }
+      toast(items.length
+        ? `已勾选 ${picked} 项，未勾选的 ${unselected.size} 项已排在前面${pickedAboveRange ? `。${pickedAboveRange} 项按最接近上限勾选` : ""}${unavailable ? `。${unavailable} 项有候选未评估裸胜率` : ""}。`
+        : "当前成品项已有手动选择。");
+    } finally {
+      if (state.bulkSelectionRun === run) {
+        state.bulkSelectionRun = null;
+        setBusy(button, false);
+      }
+    }
   }
 
   function ensureReviewButton() {
@@ -4735,7 +5099,7 @@
   function renderCandidateWorkspace() {
     const reviewButton = ensureReviewButton();
     const items = successfulWorkItems();
-    if (items.length) initializeDefaultSelections();
+    if (items.length) restoreCandidateSelections();
     const tabs = $("#work-item-tabs"); tabs.replaceChildren();
     items.forEach((item, index) => {
       const button = document.createElement("button"); button.type = "button"; button.dataset.workIndex = String(index);
@@ -4746,7 +5110,7 @@
       button.setAttribute("aria-selected", String(index === state.activeWorkIndex));
       button.tabIndex = index === state.activeWorkIndex ? 0 : -1;
       const pickedCount = selectedIdsForWork(item).length;
-      const picked = pickedCount ? ` · 已加入 ${pickedCount}` : " · 不导出";
+      const picked = pickedCount ? ` · 已加入 ${pickedCount}` : " · 未勾选";
       button.textContent = `${item.template_key} · ${item.plan_signature || item.candidate?.plan_signature || item.plan_id} · ${item.candidates.length} 个候选${picked}`; tabs.append(button);
     });
     const activeTab = $(`#work-item-tab-${state.activeWorkIndex}`);
@@ -4759,13 +5123,15 @@
     }
     renderCandidateBatchWarning(); renderCandidateTaskOverview();
     const active = activeWorkItem();
-    $("#active-work-label").textContent = `成品项 ${state.activeWorkIndex + 1}/${items.length} · ${active.template_key} · ${active.plan_signature || active.plan_id}`;
+    const totalWorkItems = jobProgressMetrics(state.jobSnapshot).total;
+    const batchTotal = totalWorkItems > items.length ? ` · 本批 ${totalWorkItems} 项` : "";
+    $("#active-work-label").textContent = `已载入候选项 ${state.activeWorkIndex + 1}/${items.length}${batchTotal} · ${active.template_key} · ${active.plan_signature || active.plan_id}`;
     const activeSelectionCount = selectedIdsForWork(active).length;
     const activeExportableCount = (active.candidates || []).filter((candidate) => candidateExportEligibility(candidate).eligible).length;
     $("#candidate-selection-copy").textContent = activeSelectionCount
       ? `本项已加入 ${activeSelectionCount} 个候选；可继续加入或移除，完成后再查看下一项。`
       : activeExportableCount
-        ? "本项不会导出；已证明候选可直接加入，非推荐候选也可人工选择。"
+        ? "可手动加入候选，或按裸胜率一键勾选。"
         : "本项没有可用的候选记录，请返回配置后重新生成。";
     $("#clear-work-selection").disabled = activeSelectionCount === 0;
     $("#complete-work-selection").disabled = state.activeWorkIndex >= items.length - 1;
@@ -4785,7 +5151,8 @@
     if (!root || !job || job.status === "completed") { root?.classList.add("is-hidden"); return; }
     root.classList.remove("is-hidden");
     const { total, finished } = jobProgressMetrics(job);
-    const candidateCount = successfulWorkItems().reduce((sum, item) => sum + (item.candidates?.length || 0), 0);
+    const candidateCount = job.search?.candidate_found_count
+      ?? successfulWorkItems().reduce((sum, item) => sum + (item.candidates?.length || 0), 0);
     const endAt = job.completed_at ? new Date(job.completed_at).getTime() : Date.now();
     const startAt = new Date(job.started_at || state.jobStartedAt || job.created_at || Date.now()).getTime();
     const events = job.events || [];
@@ -4812,29 +5179,46 @@
   }
   function renderCandidateBatchWarning() {
     const root = $("#candidate-batch-warning"); if (!root) return;
-    const missing = (state.jobResult?.items || []).filter((item) => !item.candidates?.length);
-    const incomplete = (state.jobResult?.items || []).filter(itemNeedsMoreCandidates);
-    const attentionItems = [...incomplete, ...missing];
-    root.classList.toggle("is-hidden", attentionItems.length === 0);
-    if (!attentionItems.length) { root.classList.remove("has-suggestions"); root.replaceChildren(); return; }
+    const items = state.jobResult?.items || [];
+    const attentionItems = unfinishedJobRows(state.jobSnapshot, items);
+    const missing = attentionItems.filter((item) => itemCandidateProgress(item).found === 0 && !["pending", "running"].includes(item.status));
+    const incomplete = attentionItems.filter((item) => itemCandidateProgress(item).found > 0);
+    const pendingCount = attentionItems.length - missing.length - incomplete.length;
+    const unsyncedCount = Math.max(0, jobProgressMetrics(state.jobSnapshot).total - items.length);
+    const running = ["queued", "running", "paused", "pause_requested", "cancel_requested"].includes(state.jobSnapshot?.status);
+    root.classList.toggle("is-hidden", attentionItems.length === 0 && unsyncedCount === 0);
+    if (!attentionItems.length) {
+      root.classList.remove("has-suggestions");
+      root.replaceChildren();
+      if (unsyncedCount > 0) {
+        const heading = document.createElement("strong");
+        heading.textContent = `${unsyncedCount} 项候选明细尚未载入`;
+        root.append(heading);
+      }
+      return;
+    }
     const heading = document.createElement("div"); heading.className = "candidate-warning-heading";
     const strong = document.createElement("strong");
-    strong.textContent = missing.length && incomplete.length
-      ? `${missing.length} 项未找到 · ${incomplete.length} 项候选未补齐`
-      : incomplete.length
-        ? `${incomplete.length} 个成品项的候选未补齐`
-        : `${missing.length} 个成品项未进入候选`;
+    strong.textContent = [
+      missing.length ? `${missing.length} 项未找到候选` : "",
+      incomplete.length ? `${incomplete.length} 项候选待补齐` : "",
+      pendingCount ? `${pendingCount} 项待搜索或待同步` : "",
+    ].filter(Boolean).join(" · ");
     const deterministicCount = missing.filter(isDeterministicFailure).length;
     const budgetCount = missing.filter(isBudgetFailure).length;
     const interruptedCount = missing.length - deterministicCount - budgetCount;
     const canContinueSearch = jobCanContinueSearch(state.jobSnapshot);
-    const running = ["queued", "running", "paused", "pause_requested", "cancel_requested"].includes(state.jobSnapshot?.status);
-    const guidance = document.createElement("span"); guidance.textContent = running ? "搜索尚未结束，已有候选可先查看；未完成项会继续更新。" : incomplete.length && missing.length
+    const guidance = document.createElement("span"); guidance.textContent = running
+      ? "搜索尚未结束，已有候选可先查看；未完成项会继续更新。"
+      : unsyncedCount > 0
+      ? `还有 ${unsyncedCount} 项候选明细待同步。${canContinueSearch ? "可继续搜索未完成项。" : ""}` : incomplete.length && missing.length
       ? `已找到的候选可直接使用${canContinueSearch ? "，也可继续搜索未完成项" : ""}；未找到的项请按下方原因处理。`
       : incomplete.length
         ? canContinueSearch
           ? "已找到的候选可直接使用；也可继续搜索未完成项，已有候选会保留。"
-          : "已找到的候选可直接使用；当前已达搜索上限，如需更多候选请调整参数。"
+          : state.jobSnapshot?.search?.limit_reached
+            ? "已达到累计搜索上限。可使用已有候选，也可调整参数。"
+            : "可使用已有候选。其他成品项的状态见下方。"
       : deterministicCount && (budgetCount || interruptedCount)
       ? "已证冲突项请逐项调参；预算未找到不代表无解，可保留现有结果继续搜索未完成项。"
       : deterministicCount
@@ -4849,7 +5233,7 @@
     const buildRow = (item) => {
       const row = document.createElement("div");
       const progress = itemCandidateProgress(item);
-      const isIncomplete = itemNeedsMoreCandidates(item);
+      const isIncomplete = progress.found > 0;
       const adjustmentKey = candidateAdjustmentKey(item);
       const staged = state.stagedTemplateAdjustments.has(adjustmentKey);
       const running = state.runningAdjustmentKeys.has(adjustmentKey);
@@ -4887,7 +5271,7 @@
           actions.append(run);
         }
       }
-      row.append(actions);
+      if (!item.summary_only) row.append(actions);
       return row;
     };
     attentionItems.slice(0, 6).forEach((item) => list.append(buildRow(item)));
@@ -4907,7 +5291,9 @@
       pending.setAttribute("role", "status"); pending.textContent = "正在用小预算试算可行的参数修改，结果会自动更新…"; suggestionStack.append(pending);
     }
     root.classList.toggle("has-suggestions", suggestionStack.childElementCount > 0);
+    addRecommendationBatchControls(suggestionStack);
     if (suggestionStack.childElementCount) root.append(suggestionStack);
+    syncRecommendationBatchControls();
     const canRetryInterrupted = state.jobSnapshot?.actions?.can_retry && interruptedCount > 0;
     if (canContinueSearch || canRetryInterrupted || state.stagedTemplateAdjustments.size) {
       root.append(createSearchBudgetPanel(state.jobSnapshot, { compact: true }));
@@ -4939,9 +5325,7 @@
         : "";
       const chooseMarkup = selected
         ? `<button class="selected-candidate-button" type="button" aria-pressed="true" data-select-candidate="${escapeHtml(id)}">${icon("check")}已加入，点击移除</button>`
-        : exportEligibility.manualOverrideRequired
-          ? `<button class="secondary-button candidate-pick-button candidate-export-manual" type="button" aria-pressed="false" data-select-candidate="${escapeHtml(id)}" title="${escapeHtml(exportEligibility.reason)}">选择并导出</button>`
-          : `<button class="primary-button candidate-pick-button" type="button" aria-pressed="false" data-select-candidate="${escapeHtml(id)}">加入本次导出</button>`;
+        : `<button class="primary-button candidate-pick-button" type="button" aria-pressed="false" data-select-candidate="${escapeHtml(id)}">加入本次导出</button>`;
       card.innerHTML = `<div class="candidate-card-header"><span class="candidate-title-meta"><span class="candidate-number">候选 ${String(displayCandidateIndex(generated)).padStart(2, "0")}</span>${parameterMarkup}</span><span class="candidate-header-status">${recommendationMark}${selectedMark}<span class="status-chip ${hardClass}">${escapeHtml(hardCopy)}</span></span></div><div class="board-canvas"></div><div class="candidate-card-body"><div class="candidate-summary-line"><h3>${escapeHtml(candidate.plan_signature || item.plan_signature || item.plan_id)}</h3><p>${escapeHtml(Object.keys(structureCounts).sort().join(" · ") || "塔内结构")} · ${escapeHtml(summary.replacement_count ?? 0)} 格结构块</p></div>${experienceSummaryMarkup(generated)}<div class="candidate-actions"><button class="secondary-button" type="button" data-focus-candidate="${escapeHtml(id)}">查看与播放</button><button class="secondary-button" type="button" data-compare-candidate="${escapeHtml(id)}">${state.compareIds.has(id) ? "移出对比" : "加入对比"}</button>${chooseMarkup}</div></div>`;
       root.append(card); renderBoard($(".board-canvas", card), generated.board, { maxLayer: generated.board?.bounds?.layer?.max });
     });
@@ -4951,7 +5335,7 @@
     const reviewButton = $("#review-selections");
     if (reviewButton) {
       reviewButton.disabled = selectedCandidateCount() === 0;
-      reviewButton.title = reviewButton.disabled ? "请先加入至少一个候选；非推荐候选确认提示后也可导出" : "";
+      reviewButton.title = reviewButton.disabled ? "请先加入至少一个候选" : "";
     }
   }
 
@@ -5035,6 +5419,54 @@
     return { rows:rows.sort((a,b) => Number(b.changed)-Number(a.changed)), references:references.map(reference => reference.label) };
   }
 
+  function candidateParameterGrid(rows) {
+    return `<dl class="candidate-parameter-grid">${rows.map(row => `<div${row.changed ? ' class="is-parameter-different"' : ""}><dt>${escapeHtml(row.label)}${row.changed ? '<span class="parameter-difference-label">不同</span>' : ""}</dt><dd><span class="parameter-current-value">${escapeHtml(row.value)}</span>${(row.comparisons || []).map(reference => `<small class="parameter-comparison-value">${escapeHtml(reference.label)}：${escapeHtml(reference.value)}</small>`).join("")}</dd></div>`).join("")}</dl>`;
+  }
+  function batchGenerationParameterMarkup(items) {
+    const groups = new Map();
+    for (const item of items) {
+      if (!item.configured_parameters) continue;
+      const rows = candidateParameterRows(item.configured_parameters);
+      const key = JSON.stringify(rows.map(row => [row.key, row.value]));
+      if (!groups.has(key)) groups.set(key, { rows, items: [] });
+      groups.get(key).items.push([item.template_key, item.plan_signature].filter(Boolean).join(" · "));
+    }
+    if (!groups.size) return '<p>本批任务没有可用的生成参数快照。</p>';
+    const missing = items.length - [...groups.values()].reduce((sum, group) => sum + group.items.length, 0);
+    const notice = missing ? `<p>${missing} 个成品项没有参数快照。</p>` : "";
+    return notice + [...groups.values()].map((group, index) => {
+      const grid = candidateParameterGrid(group.rows);
+      const count = `${group.items.length} 个成品项`;
+      if (groups.size === 1) return `<p class="batch-parameter-items">${count}使用相同生成要求</p>${grid}`;
+      return `<details class="batch-parameter-group"${index === 0 ? " open" : ""}><summary>生成方案 ${index + 1} · ${count}</summary><p class="batch-parameter-items">${group.items.map(escapeHtml).join("、")}</p>${grid}</details>`;
+    }).join("");
+  }
+  async function openBatchGenerationParameters() {
+    const jobId = state.jobId;
+    const dialog = $("#candidate-parameter-dialog");
+    const body = $("#candidate-parameter-body");
+    const token = Symbol();
+    state.batchParameterLoad = token;
+    body.dataset.parameterView = "batch";
+    $("#candidate-parameter-scope").textContent = "任务参数快照";
+    $("#candidate-parameter-title").textContent = "本批生成参数";
+    body.innerHTML = '<p role="status">正在读取生成参数…</p>';
+    body.scrollTop = 0;
+    dialog.showModal();
+    let items;
+    try {
+      const payload = await api(`/jobs/${encodeURIComponent(jobId)}/generation-parameters`);
+      items = payload.work_items || [];
+    } catch {
+      items = (state.jobResult?.items || []).map(item => ({
+        template_key: item.template_key, plan_signature: item.plan_signature,
+        configured_parameters: item.candidates?.[0]?.configured_parameters,
+      }));
+    }
+    if (!dialog.open || state.jobId !== jobId || state.batchParameterLoad !== token || body.dataset.parameterView !== "batch") return;
+    body.innerHTML = batchGenerationParameterMarkup(items);
+  }
+
   function openCandidateParameterDialog(candidateIdValue) {
     const item = activeWorkItem();
     const generated = orderedCandidates(item).find((entry) => candidateId(entry) === candidateIdValue);
@@ -5048,6 +5480,7 @@
       ? units.map((unit, index) => `${index + 1}：${(unit.groups_per_type || []).join(" / ") || "默认"}`).join("；")
       : "—";
     const stepCopy = (plan.units || []).map((unit) => `s${unit.step}`).join(" · ") || generated.candidate?.plan_signature || item?.plan_signature || "—";
+    $("#candidate-parameter-scope").textContent = "候选参数快照";
     $("#candidate-parameter-title").textContent = `候选 ${String(displayCandidateIndex(generated)).padStart(2, "0")} · 参数详情`;
     const comparison = candidateParameterComparison(generated, orderedCandidates(item));
     const rows = comparison.rows.length ? comparison.rows : [
@@ -5058,7 +5491,10 @@
       ["结构块最高层", options.max_layer ?? (options.max_layer_percent != null ? `${options.max_layer_percent}%` : "不限制")],
       ["门槛前回收", `${units.map(unit => unit.required_pre_gate_recycles ?? 0).join(" / ") || "0"} 次`],
     ].map(([label,value]) => ({label,value,changed:false,comparisons:[]}));
-    $("#candidate-parameter-body").innerHTML = `<dl class="candidate-parameter-grid">${rows.map(row => `<div${row.changed ? ' class="is-parameter-different"' : ""}><dt>${escapeHtml(row.label)}${row.changed ? '<span class="parameter-difference-label">不同</span>' : ""}</dt><dd><span class="parameter-current-value">${escapeHtml(row.value)}</span>${row.comparisons.map(reference => `<small class="parameter-comparison-value">${escapeHtml(reference.label)}：${escapeHtml(reference.value)}</small>`).join("")}</dd></div>`).join("")}</dl>`;
+    const body = $("#candidate-parameter-body");
+    body.dataset.parameterView = "candidate";
+    body.innerHTML = candidateParameterGrid(rows);
+    body.scrollTop = 0;
     $("#candidate-parameter-dialog").showModal();
   }
 
@@ -5233,6 +5669,7 @@
       return;
     }
     const nextIds = selected ? ids.filter((value) => value !== id) : [...ids, id];
+    state.bulkSelectionsByJob.get(state.jobId)?.delete(key);
     state.selectedCandidates.set(key, nextIds);
     state.selectionsByJob.set(state.jobId, state.selectedCandidates); persistSelections();
     if (selectedCandidateCount() > 0) unlockFlow(4, { preserveScroll: true });
@@ -5242,7 +5679,7 @@
       selected
         ? `候选 ${index} 已从本次导出移除。`
         : exportEligibility.manualOverrideRequired
-          ? `候选 ${index} 已加入；导出前会再次确认规则、难度或证据提示。`
+          ? `候选 ${index} 已加入；相关结论会随模板保存到导出报告。`
           : `候选 ${index} 已加入本次导出；本项可继续多选。`,
     );
   }
@@ -5254,6 +5691,7 @@
   }
   function clearActiveWorkSelection() {
     const item = activeWorkItem(); if (!item) return;
+    state.bulkSelectionsByJob.get(state.jobId)?.delete(workKey(item));
     state.selectedCandidates.set(workKey(item), []); state.selectionsByJob.set(state.jobId, state.selectedCandidates); persistSelections();
     renderCandidateWorkspace(); renderExportSelection(); toast("本项候选已清空，其他成品项的选择保持不变。" );
   }
@@ -5306,10 +5744,10 @@
     button.setAttribute("aria-pressed", String(selected));
     button.className = selected
       ? "selected-candidate-button focus-select-candidate"
-      : `secondary-button focus-select-candidate${exportEligibility.manualOverrideRequired ? " candidate-export-manual" : ""}`;
+      : "secondary-button focus-select-candidate";
     button.innerHTML = selected
       ? `${icon("check")}已加入，点击移除`
-      : exportEligibility.manualOverrideRequired ? "选择并导出" : "加入本次导出";
+      : "加入本次导出";
     button.title = selected ? "从本次导出列表移除当前候选" : exportEligibility.reason || "将当前候选加入本次导出";
   }
   function syncFocusCandidateNavigation() {
@@ -5379,8 +5817,49 @@
     $("#focus-title").textContent = `${item.template_key} · ${candidate.candidate?.plan_signature || item.plan_signature || item.plan_id} · 候选 ${index}`;
     $("#focus-board-label").textContent = candidateId(candidate);
     renderFocusSummary(); setupPlayer(); renderPlayer(); syncFocusCandidateNavigation(); syncFocusSelectionAction();
+    loadFocusedPlayerEstimate(state.jobId, id);
     window.scrollTo({ top: 0, behavior: options.scrollBehavior || "smooth" });
     window.setTimeout(() => $("#focus-title")?.focus(), 0);
+  }
+  function requestPlayerEstimate(jobId, id) {
+    const key = `${jobId}/${id}`;
+    if (state.playerEstimates.has(key)) return Promise.resolve(state.playerEstimates.get(key));
+    if (state.playerEstimateRequests.has(key)) return state.playerEstimateRequests.get(key);
+    const request = new Promise(resolve => state.playerEstimateQueue.push({ jobId, id, key, resolve }));
+    state.playerEstimateRequests.set(key, request);
+    drainPlayerEstimates();
+    return request;
+  }
+  async function drainPlayerEstimates() {
+    if (state.playerEstimateRunning) return;
+    state.playerEstimateRunning = true;
+    try {
+      while (state.playerEstimateQueue.length) {
+        const activeIds = new Set(activeWorkItem()?.candidates?.map(candidateId));
+        const focusedId = candidateId(state.focusCandidate);
+        const queue = state.playerEstimateQueue;
+        let index = queue.findIndex(entry => entry.jobId === state.jobId && entry.id === focusedId);
+        if (index < 0) index = queue.findIndex(entry => entry.jobId === state.jobId && activeIds.has(entry.id));
+        const [entry] = queue.splice(Math.max(0, index), 1);
+        const current = entry.jobId === state.jobId;
+        const estimate = current
+          ? await api(`/jobs/${encodeURIComponent(entry.jobId)}/player-estimate/${encodeURIComponent(entry.id)}`, { timeoutMs: 30000 }).catch(() => null)
+          : null;
+        if (current) state.playerEstimates.set(entry.key, estimate);
+        state.playerEstimateRequests.delete(entry.key);
+        entry.resolve(estimate);
+      }
+    } finally {
+      state.playerEstimateRunning = false;
+    }
+  }
+  async function loadFocusedPlayerEstimate(jobId, id) {
+    if (!jobId || !id) return;
+    const estimate = await requestPlayerEstimate(jobId, id);
+    if (state.jobId === jobId && candidateId(state.focusCandidate) === id) {
+      const summary = $("#focus-summary .sample-pass-summary");
+      if (summary) summary.outerHTML = samplePassSummaryMarkup(state.focusCandidate, estimate);
+    }
   }
   function setFocusLayer(value, rerender = true) {
     const input = $("#focus-layer"); if (!input) return;
@@ -5400,7 +5879,8 @@
     const hardCopy = candidateExportEligibility(generated).shortLabel;
     const pressurePanel = focusExperienceSummaryMarkup(generated);
     const supportingExperience = experienceSummaryMarkup(generated, { includeArchetype: false, includePressure: false, showEmptyGuidance: false });
-    const samplePassMarkup = samplePassSummaryMarkup(generated);
+    const estimate = state.playerEstimates.get(`${state.jobId}/${candidateId(generated)}`);
+    const samplePassMarkup = samplePassSummaryMarkup(generated, estimate);
     $("#focus-summary").innerHTML = `<div class="focus-summary-heading"><div class="focus-summary-identity"><span class="soft-label">候选摘要</span><h3>候选 ${escapeHtml(displayCandidateIndex(generated))} · ${escapeHtml(candidate.plan_signature || "tower")}</h3><p>${escapeHtml(types)}</p></div>${pressurePanel}</div>${supportingExperience}<dl class="summary-list"><dt>原模板 Tile 总数</dt><dd>${escapeHtml(source.tileCount)}</dd><dt>原模板非塔 Tile 总数</dt><dd>${escapeHtml(source.nonTowerTileCount)}</dd><dt>原模板总层数</dt><dd>${escapeHtml(source.maxLayer)}</dd><dt>原模板非塔层数</dt><dd>${escapeHtml(source.nonTowerMaxLayer)}</dd><dt>目标结构步数</dt><dd>${escapeHtml(candidateSteps(generated))}</dd><dt>结构块</dt><dd>${escapeHtml(summary.replacement_count ?? 0)} 格</dd><dt>A / B 替换</dt><dd>${escapeHtml(summary.replaced_a_count ?? 0)} / ${escapeHtml(summary.replaced_b_count ?? 0)}</dd><dt>结构内夹 A / B</dt><dd>${escapeHtml(summary.nested_a_count ?? 0)} / ${escapeHtml(summary.nested_b_count ?? 0)}</dd><dt>结构块最低层</dt><dd>${escapeHtml(structureLayers.minimum)}</dd><dt>结构块最高层</dt><dd>${escapeHtml(structureLayers.maximum)}</dd><dt>结构块层间距</dt><dd>${escapeHtml(structureLayers.span)}</dd><dt>布局打平分</dt><dd>${qualityScore(generated).toFixed(3)}</dd><dt>硬校验</dt><dd>${escapeHtml(hardCopy)}</dd></dl><details class="experience-breakdown"><summary aria-label="展开本候选整板体验依据">查看本候选整板体验依据</summary><div>${experienceEvidenceMarkup(generated)}</div></details><details class="difficulty-breakdown"><summary aria-label="展开本候选难度策略样本">查看难度策略样本</summary><div>${difficultyReportMarkup(generated)}</div></details><details class="quality-breakdown"><summary aria-label="展开本候选布局打平分">查看布局打平分项</summary><div>${qualityFormulaMarkup(generated)}</div></details>`;
     $("#focus-summary > .summary-list").insertAdjacentHTML("beforebegin", samplePassMarkup);
     const experienceBreakdown = $(".experience-breakdown", $("#focus-summary"));
@@ -5511,46 +5991,56 @@
     }, Number($("#trace-speed").value));
   }
 
+  function selectedExportRows(lockedSelections) {
+    const items = new Map((state.jobResult?.items || []).map(item => [workKey(item), item]));
+    if (Array.isArray(lockedSelections)) return lockedSelections.map(choice => {
+      const item = items.get(`${choice.template_key}::${choice.resolved_plan_id}`);
+      return { choice, item, generated: item?.candidates?.find(candidate => candidateId(candidate) === choice.candidate_id) };
+    });
+    const rows = [];
+    for (const [key, ids] of state.selectedCandidates) {
+      if (!ids.length) continue;
+      const item = items.get(key);
+      const candidates = new Map((item?.candidates || []).map(candidate => [candidateId(candidate), candidate]));
+      for (const id of ids) rows.push({
+        choice: item && { template_key: item.template_key, resolved_plan_id: item.plan_id, candidate_id: id },
+        item, generated: candidates.get(id), id,
+      });
+    }
+    return rows;
+  }
   function renderExportSelection(lockedSelections = null) {
     const root = $("#export-selection-list"); root.replaceChildren();
-    const locked = Array.isArray(lockedSelections) ? lockedSelections.reduce((map, choice) => {
-      const key = `${choice.template_key}::${choice.resolved_plan_id}`;
-      map.set(key, [...(map.get(key) || []), choice.candidate_id]); return map;
-    }, new Map()) : null;
-    const items = successfulWorkItems(); let count = 0; let manualCount = 0;
-    items.forEach((item) => {
-      const ids = locked ? normalizeSelectedCandidateIds(locked.get(workKey(item))) : selectedIdsForWork(item);
-      ids.forEach((id) => {
-        const generated = item.candidates.find((candidate) => candidateId(candidate) === id); if (!generated) return;
-        const exportEligibility = candidateExportEligibility(generated);
-        count += 1; const row = document.createElement("div"); row.className = "export-candidate-row";
-        const details = document.createElement("div"); const title = document.createElement("strong"); title.textContent = `${item.template_key} · ${item.plan_signature || item.plan_id} · 候选 ${String(displayCandidateIndex(generated)).padStart(2, "0")}`;
-        const small = document.createElement("small"); small.textContent = `${id} · ${candidateSummary(generated).replacement_count ?? 0} 格结构块`;
-        details.append(title, small); const status = document.createElement("span"); status.className = `status-chip ${exportEligibility.className}`;
-        if (exportEligibility.manualOverrideRequired) manualCount += 1;
-        status.textContent = locked && exportEligibility.eligible
-          ? exportEligibility.manualOverrideRequired ? "已锁定 · 人工确认" : "已锁定 · 硬校验已证明"
-          : exportEligibility.label;
-        row.append(details, status); root.append(row);
-      });
-    });
-    $("#export-selection-count").textContent = locked
-      ? `${count} 项 · 本次导出锁定选择${manualCount ? ` · ${manualCount} 项已人工确认` : ""}`
-      : `${count} 项${manualCount ? ` · ${manualCount} 项需人工确认` : ""}`;
-    const selectionStatus = $("#export-selection-status");
-    if (selectionStatus) {
-      selectionStatus.className = `status-chip ${manualCount ? "warning" : "success"}`;
-      selectionStatus.textContent = manualCount
-          ? "含待人工确认候选"
-          : "候选硬校验通过";
+    const locked = Array.isArray(lockedSelections);
+    const rows = selectedExportRows(lockedSelections);
+    for (const { choice, item, generated, id } of rows) {
+      const row = document.createElement("div"); row.className = "export-candidate-row";
+      const details = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = item && generated
+        ? `${item.template_key} · ${item.plan_signature || item.plan_id} · 候选 ${String(displayCandidateIndex(generated)).padStart(2, "0")}`
+        : choice ? `${choice.template_key} · ${choice.resolved_plan_id}` : "所选候选";
+      const small = document.createElement("small");
+      small.textContent = generated
+        ? `${choice.candidate_id} · ${candidateSummary(generated).replacement_count ?? 0} 格结构块`
+        : choice?.candidate_id || id;
+      details.append(title, small);
+      const status = document.createElement("span");
+      const evidence = generated && candidateExportEligibility(generated);
+      status.className = `status-chip ${evidence ? evidence.className : locked ? "success" : "warning"}`;
+      status.textContent = evidence ? evidence.label : locked ? "已锁定" : "暂无法读取";
+      row.append(details, status); root.append(row);
     }
+    $("#export-selection-count").textContent = `${rows.length} 项${locked ? " · 本次导出已锁定" : ""}`;
     const launch = $("#export-selected");
-    launch.disabled = count === 0 || Boolean(locked);
+    $("#export-launch-error").textContent = locked ? "" : state.exportLaunches.get(state.jobId)?.error || "";
+    if (launch.dataset.isBusy === "true") return;
+    launch.disabled = rows.length === 0 || locked;
     launch.innerHTML = locked
       ? `${icon("lock")}本次导出已锁定`
-      : manualCount
-        ? `确认风险并导出${icon("arrow")}`
-        : `预检并导出到本地${icon("arrow")}`;
+      : state.exportLaunches.get(state.jobId)?.error
+        ? `重试导出${icon("refresh")}`
+        : `导出所选候选${icon("arrow")}`;
   }
   function resetExportViewContext() {
     state.exportLoadToken += 1;
@@ -5562,12 +6052,9 @@
     $("#export-success")?.classList.add("is-hidden");
     $("#exported-output-list")?.replaceChildren();
     $("#export-selection-list")?.replaceChildren();
+    if ($("#export-launch-error")) $("#export-launch-error").textContent = "";
     renderActivityTimeline($("#export-activity-log"), [], { emptyCopy: "导出尚未开始" });
     if ($("#export-selection-count")) $("#export-selection-count").textContent = "0 项";
-    if ($("#export-selection-status")) {
-      $("#export-selection-status").className = "status-chip success";
-      $("#export-selection-status").textContent = "候选硬校验通过";
-    }
     const launch = $("#export-selected");
     if (launch) {
       delete launch.dataset.isBusy;
@@ -5579,79 +6066,75 @@
   }
   function openExportStep() {
     if (!state.jobId || !state.jobResult) return;
-    const locked = state.exportSnapshot?.job_id === state.jobId && state.exportSnapshot?.locked_selections?.length
+    let locked = state.exportSnapshot?.job_id === state.jobId && state.exportSnapshot?.locked_selections?.length
       ? state.exportSnapshot.locked_selections
       : null;
+    if (locked && ["failed", "cancelled"].includes(state.exportSnapshot.status)) {
+      const sameChoices = locked.length === selectedCandidateCount() && locked.every(choice =>
+        selectedIdsForWork(`${choice.template_key}::${choice.resolved_plan_id}`).includes(choice.candidate_id));
+      if (!sameChoices) {
+        resetExportViewContext();
+        locked = null;
+      }
+    }
     renderExportSelection(locked);
     setFlow(4);
   }
-  async function exportSelected(options = {}) {
+  async function exportSelected() {
     const button = $("#export-selected");
     const exportingJobId = state.jobId;
+    if (button.dataset.isBusy === "true") return;
     const exportLoadToken = ++state.exportLoadToken;
+    let launch;
     try {
       if (state.exportSnapshot?.job_id === state.jobId && state.exportSnapshot?.locked_selections?.length) throw new Error("当前导出已锁定；请先等待完成或终止，再返回候选创建新的导出。");
-      const selections = [];
-      const staleSelections = [];
-      const manualEvidenceSelections = [];
-      successfulWorkItems().forEach((item) => {
-        const candidateById = new Map((item.candidates || []).map((candidate) => [candidateId(candidate), candidate]));
-        selectedIdsForWork(item).forEach((id) => {
-          const candidate = candidateById.get(id);
-          const eligibility = candidateExportEligibility(candidate);
-          if (!candidate || !eligibility.eligible) {
-            staleSelections.push({ key: workKey(item), id });
-            return;
-          }
-          const selection = {
-            template_key: item.template_key,
-            resolved_plan_id: item.plan_id,
-            candidate_id: id,
-            manual_evidence_override: eligibility.manualOverrideRequired,
-          };
-          selections.push(selection);
-          if (eligibility.manualOverrideRequired) manualEvidenceSelections.push(selection);
-        });
-      });
-      if (staleSelections.length) {
-        staleSelections.forEach(({ key, id }) => {
-          state.selectedCandidates.set(key, selectedIdsForWork(key).filter((value) => value !== id));
-        });
-        state.selectionsByJob.set(state.jobId, state.selectedCandidates); persistSelections();
-        renderCandidateWorkspace(); renderExportSelection();
-        throw new Error("候选已不存在或生成记录已失效，已清除陈旧选择，请重新确认。");
+      const rows = selectedExportRows();
+      if (rows.some(({ generated }) => !generated)) {
+        throw new Error("部分所选候选暂时无法复验，请返回候选核对后重试。原勾选已保留。");
       }
-      if (!selections.length) throw new Error("请至少选择一个候选。");
-      if (manualEvidenceSelections.length && options.manualEvidenceConfirmed !== true) {
-        requestConfirmation(
-          `确认导出 ${manualEvidenceSelections.length} 个非推荐候选？`,
-          "其中可能包含结构规则未通过、未达难度目标或动态依据不足的候选。它们不属于默认推荐；继续后，具体结论与人工确认状态会写入 manifest 和验证报告。",
-          () => exportSelected({ manualEvidenceConfirmed: true }),
-          {
-            safeLabel: "返回检查",
-            confirmLabel: "已了解，继续导出",
-            danger: false,
-          },
-        );
-        return;
-      }
+      if (!rows.length) throw new Error("请至少选择一个候选。");
+      // The export button is the user's decision for exactly these candidates.
+      const selections = rows.map(({ choice }) => ({ ...choice, manual_evidence_override: true }));
+      const signature = JSON.stringify(selections);
+      const previousLaunch = state.exportLaunches.get(exportingJobId);
+      const retry = previousLaunch?.signature === signature;
+      launch = retry ? previousLaunch : { signature, key: uuid(), error: "" };
+      state.exportLaunches.set(exportingJobId, launch);
+      $("#export-launch-error").textContent = "";
       setBusy(button, true, "正在启动导出…");
-      const record = await api(`/jobs/${encodeURIComponent(exportingJobId)}/exports`, { method: "POST", body: { selections, idempotency_key: uuid() } });
-      if (state.exportLoadToken !== exportLoadToken || state.jobId !== exportingJobId || record.job_id !== exportingJobId) return;
+      const record = await api(`/jobs/${encodeURIComponent(exportingJobId)}/exports`, {
+        method: "POST", body: { selections, idempotency_key: launch.key }, timeoutMs: 15000,
+      });
+      if (state.exportLoadToken !== exportLoadToken || state.jobId !== exportingJobId) return;
+      if (!record.export_id || record.job_id !== exportingJobId) throw new Error("未收到导出任务编号，请重试。");
+      state.exportLaunches.delete(exportingJobId);
       if (state.exportPollTimer) window.clearTimeout(state.exportPollTimer);
       state.exportId = record.export_id; state.exportSnapshot = record;
       state.exportStartedAt = record.started_at || record.created_at || new Date().toISOString();
-      renderExportSelection(record.locked_selections);
       $(".export-panel")?.classList.remove("is-complete");
       $("#export-success").classList.add("is-hidden"); $("#export-progress").classList.remove("is-hidden");
-      renderExportProgress(record); pollExport(record.export_id);
-    } catch (error) { toast(error.message, "error"); }
+      renderExportProgress(record);
+      if (record.status === "completed") showCompletedExport(record);
+      else if (!["failed", "cancelled"].includes(record.status)) pollExport(record.export_id);
+    } catch (error) {
+      if (launch) launch.error = error.message;
+      if (state.exportLoadToken !== exportLoadToken || state.jobId !== exportingJobId) return;
+      $("#export-launch-error").textContent = error.message;
+      toast(error.message, "error");
+    }
     finally {
-      if (state.jobId === exportingJobId) {
+      if (state.exportLoadToken === exportLoadToken && state.jobId === exportingJobId && launch) {
         setBusy(button, false);
-        if (state.exportSnapshot?.job_id === state.jobId && state.exportSnapshot?.locked_selections?.length) renderExportSelection(state.exportSnapshot.locked_selections);
+        renderExportSelection(state.exportSnapshot?.locked_selections);
       }
     }
+  }
+  function exportErrorCopy(error) {
+    if (error?.code === "RECONCILIATION_REQUIRED" && error.message === "检测到孤立正式 bytes") {
+      const filename = error.evidence?.path?.split(/[\\/]/).pop();
+      return `输出目录中的${filename ? `「${filename}」` : "一份旧模板"}缺少导出登记，旧版因此停止写入。已锁定的候选仍可重试。`;
+    }
+    return error?.message;
   }
   function exportPhase(record) {
     const phase = record?.control?.phase || "";
@@ -5661,7 +6144,7 @@
     if (["export_prepare_selection", "export_validate_request"].includes(phase)) return { index: 1, copy: "正在独立复验所选候选" };
     if (["export_initialize_workspace", "export_workspace_audited"].includes(phase)) return { index: 2, copy: "正在审计输出工作区" };
     if (record?.status === "committing" || phase === "export_commit") return { index: 3, copy: "正在执行不可中断的安全写入" };
-    return { index: 0, copy: "正在按锁定配置重建所选候选" };
+    return { index: 0, copy: "正在读取已锁定的候选" };
   }
   function renderExportProgress(record) {
     state.exportSnapshot = record;
@@ -5688,10 +6171,10 @@
       paused: "导出任务已暂停", cancel_requested: "正在安全终止", committing: "正在安全写入",
       cancelled: "导出任务已终止", failed: "导出失败", completed: "导出完成",
     })[record.status] || "导出任务";
-    $("#export-progress-copy").textContent = record.error?.message || phase.copy;
+    $("#export-progress-copy").textContent = exportErrorCopy(record.error) || phase.copy;
     const verified = record.status === "completed" ? total : Math.min(completed, total);
     $("#export-progress-count").textContent = phase.index === 0
-      ? `${Math.min(rebuilt, rebuildTotal)} / ${rebuildTotal} 份成品方案已重建`
+      ? `${Math.min(rebuilt, rebuildTotal)} / ${rebuildTotal} 份成品方案已就绪`
       : `${verified} / ${total} 项已复验`;
     $("#export-progress-percent").textContent = `${flowPercent}%`;
     $("#export-progress-track").setAttribute("aria-valuenow", String(flowPercent));
@@ -5700,7 +6183,7 @@
     $("#export-current-item").textContent = record.status === "completed"
       ? "所选候选已完成复验并安全写入"
       : phase.index === 0
-      ? rebuildItem ? `当前重建：${rebuildItem}` : "正在建立可复现任务"
+      ? rebuildItem ? `当前：${rebuildItem}` : "正在准备候选快照"
       : progress.current_item
         ? `${completed === 0 ? "正在复验" : "当前"}：${progress.current_item}`
         : phase.index >= 2 ? "所选候选复验完成，正在收尾" : "正在准备独立复验";
@@ -5718,7 +6201,7 @@
       : pauseRequested
       ? `有效计算 ${formatDuration(elapsed)} · 正在前往安全暂停点`
       : remaining !== null
-      ? `${timePrefix} · ${phase.index === 0 ? "重建" : "复验"}剩余 ${formatApproxDuration(remaining)}（粗估）`
+      ? `${timePrefix} · ${phase.index === 0 ? "准备" : "复验"}剩余 ${formatApproxDuration(remaining)}（粗估）`
       : phase.index >= 2 && active ? `${timePrefix} · 复验完成，正在收尾` : `${timePrefix} · 正在测算剩余时间`;
     $("#export-last-activity").textContent = `服务端最近进展 ${formatClock(record.last_progress_at || record.started_at || record.created_at)}`;
     announce(
@@ -5744,10 +6227,11 @@
       : `${icon("pause")}<span>暂停</span>`;
     $("#export-cancel").disabled = !record.actions?.can_cancel;
     $("#export-retry").classList.toggle("is-hidden", !record.actions?.can_retry);
+    $("#export-progress")?.classList.toggle("can-retry", Boolean(record.actions?.can_retry));
   }
   async function pollExport(exportId) {
     try {
-      const record = await api(`/exports/${encodeURIComponent(exportId)}`);
+      const record = await api(`/exports/${encodeURIComponent(exportId)}`, { timeoutMs: 15000 });
       if (state.exportId !== exportId) return;
       state.exportPollFailures = 0;
       renderExportProgress(record);
@@ -5756,7 +6240,7 @@
       }
       if (record.status === "completed") {
         showCompletedExport(record, true);
-      } else if (record.error?.message) toast(record.error.message, "error");
+      } else if (record.error?.message) toast(exportErrorCopy(record.error), "error");
     } catch (error) {
       if (state.exportId !== exportId) return;
       state.exportPollFailures += 1;
@@ -5840,13 +6324,22 @@
     if (!state.exportId) return;
     const exportId = state.exportId;
     const jobId = state.jobId;
+    const retryButton = action === "retry" ? $("#export-retry") : null;
+    if (retryButton?.dataset.isBusy === "true") return;
+    setBusy(retryButton, true, "正在重试…");
     try {
-      const record = await api(`/exports/${encodeURIComponent(exportId)}/control`, { method: "POST", body: { action } });
+      const record = await api(`/exports/${encodeURIComponent(exportId)}/control`, { method: "POST", body: { action }, timeoutMs: 15000 });
       if (state.exportId !== exportId || state.jobId !== jobId || record.export_id !== exportId) return;
       renderExportProgress(record);
       if (state.exportPollTimer) window.clearTimeout(state.exportPollTimer);
       pollExport(exportId);
-    } catch (error) { toast(error.message, "error"); }
+    } catch (error) {
+      if (state.exportId !== exportId || state.jobId !== jobId) return;
+      toast(error.message, "error");
+      if (retryButton) pollExport(exportId);
+    } finally {
+      setBusy(retryButton, false);
+    }
   }
 
   async function refreshTasks() {
@@ -5854,14 +6347,8 @@
     try {
       const [jobPayload, exportPayload] = await Promise.all([api("/jobs"), api("/exports")]);
       const jobSummaries = jobPayload.jobs || [];
-      const retryDetails = await Promise.all(jobSummaries
-        .filter((item) => item.actions?.can_retry || item.actions?.can_continue_search || item.actions?.can_use_partial_results)
-        .map(async (item) => {
-          try { return [item.job_id, await api(`/jobs/${encodeURIComponent(item.job_id)}`)]; }
-          catch { return [item.job_id, null]; }
-        }));
-      const detailByJob = new Map(retryDetails);
-      const jobs = jobSummaries.map((item) => ({ ...item, ...(detailByJob.get(item.job_id) || {}), kind: "generation", id: item.job_id }));
+      state.taskJobSummaries = new Map(jobSummaries.map((item) => [item.job_id, item]));
+      const jobs = jobSummaries.map((item) => ({ ...item, kind: "generation", id: item.job_id }));
       const exports = (exportPayload.exports || []).map((item) => ({ ...item, kind: "export", id: item.export_id }));
       const tasks = [...jobs, ...exports].sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
       if (!tasks.length) { root.innerHTML = '<div class="empty-state">当前本地服务会话还没有生成或导出任务。</div>'; return; }
@@ -5888,8 +6375,7 @@
         if (task.actions?.can_pause) actions.insertAdjacentHTML("beforeend", `<button type="button" class="text-button" data-task-action="pause" data-task-kind="${task.kind}" data-task-id="${escapeHtml(task.id)}">暂停</button>`);
         if (task.actions?.can_resume) actions.insertAdjacentHTML("beforeend", `<button type="button" class="text-button" data-task-action="resume" data-task-kind="${task.kind}" data-task-id="${escapeHtml(task.id)}">继续</button>`);
         if (task.actions?.can_cancel) actions.insertAdjacentHTML("beforeend", `<button type="button" class="text-button danger-text" data-task-action="cancel" data-task-kind="${task.kind}" data-task-id="${escapeHtml(task.id)}">终止</button>`);
-        const hasBudgetFailure = task.kind === "generation" && (task?.result?.items || []).some(isBudgetFailure);
-        const canContinueSearch = task.kind === "generation" && jobCanContinueSearch(task, hasBudgetFailure ? task.result.items : []);
+        const canContinueSearch = task.kind === "generation" && jobCanContinueSearch(task, unfinishedJobRows(task, []));
         if (canContinueSearch) {
           actions.insertAdjacentHTML("beforeend", `<button type="button" class="text-button" data-task-action="resume_unfinished" data-task-kind="${task.kind}" data-task-id="${escapeHtml(task.id)}">继续搜索未完成项</button>`);
         } else if (task.actions?.can_retry && (task.kind !== "generation" || taskHasTransientFailure(task))) {
@@ -5902,48 +6388,48 @@
       syncTaskControlButtons();
     } catch (error) { root.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`; }
   }
-  async function loadJob(jobId) {
+  async function loadJob(jobId, button = null) {
+    if (button?.dataset.isBusy === "true") return null;
+    setBusy(button, true, "正在打开…");
     state.sourcePreviewToken += 1;
     state.taskSourceItem = null;
     $("#task-source-preview")?.close();
     const loadToken = ++state.jobLoadToken;
     invalidateAdjustmentRun();
     try {
-      resetExportViewContext();
-      const job = await api(`/jobs/${encodeURIComponent(jobId)}`);
+      const job = button && state.taskJobSummaries.get(jobId) || await readJobSummary(jobId);
       if (loadToken !== state.jobLoadToken) return null;
+      if (!job?.status) throw new Error("本地服务未返回这项任务。");
+      resetExportViewContext();
       if (state.jobPollTimer) window.clearTimeout(state.jobPollTimer);
+      const sameJob = state.jobId === jobId;
+      const cached = sameJob && state.jobSnapshot?.revision === job.revision ? state.jobSnapshot.result : null;
       const adjustmentDialog = $("#template-adjustment-dialog");
       if (adjustmentDialog?.open) adjustmentDialog.close("context_changed");
       else if (state.adjustmentDialog) restoreAdjustmentForm();
       // Candidate-page drafts intentionally belong to one loaded job only.
       // Never let a same-named template in another history record inherit them.
       state.stagedTemplateAdjustments = new Map();
+      state.selectedRetryRecommendations.clear();
       state.runningAdjustmentKeys = new Set();
-      state.jobId = jobId; state.jobSnapshot = job; state.jobStartedAt = job.started_at || job.created_at; state.isRecoveredJob = true; state.jobRecommendationPollAttempts = 0;
+      state.jobId = jobId; state.jobStartedAt = job.started_at || job.created_at; state.isRecoveredJob = true;
+      state.jobPollFailures = 0; state.jobRecommendationPollAttempts = 0;
       state.pendingUsePartialReview = false; state.lastParameterSuggestionUndo = null;
-      state.jobResult = null;
-      state.jobResult = availableResultForJob(job); state.selectedCandidates = selectionsForJob(jobId);
+      state.jobResult = sameJob ? state.jobResult : null;
+      state.selectedCandidates = selectionsForJob(jobId);
       state.candidateOverviewOpened = false;
-      if (state.jobResult?.batch_seed !== undefined) {
-        state.seed = String(state.jobResult.batch_seed); state.seedWasAutoResolved = true; $("#batch-seed").value = state.seed;
-      }
       state.completedSteps = new Set([1, 2]);
-      state.compareIds.clear(); state.activeWorkIndex = 0; state.unlockedFlow = 3; navigate("create"); setFlow(3);
-      renderGenerationProgress(job);
-      const activeJob = ["queued", "running", "pause_requested", "paused", "cancel_requested"].includes(job.status);
-      const incompleteCandidateCount = successfulWorkItems().filter(itemNeedsMoreCandidates).length;
-      const offerTerminalChoice = ["cancelled", "failed"].includes(job.status)
-        || (job.status === "partial" && incompleteCandidateCount > 0);
-      if (state.jobResult && successfulWorkItems().length && !activeJob && !offerTerminalChoice) {
-        initializeDefaultSelections(); state.completedSteps.add(3); if (job.exported) state.completedSteps.add(4); unlockFlow(4);
-        $("#generation-state").classList.add("is-hidden"); $("#candidate-workspace").classList.remove("is-hidden"); renderCandidateWorkspace();
-      } else {
-        $("#generation-state").classList.remove("is-hidden"); $("#candidate-workspace").classList.add("is-hidden");
-      }
-      if (activeJob || jobRecommendationsPending(job)) pollJob(jobId);
+      state.compareIds.clear(); state.activeWorkIndex = 0; state.candidatePage = 0; state.unlockedFlow = 3;
+      $("#compare-workspace").classList.add("is-hidden"); $("#focus-workspace").classList.add("is-hidden");
+      $("#generation-state").classList.remove("is-hidden");
+      $("#candidate-workspace").classList.toggle("is-hidden", !state.jobResult?.items?.some((item) => item.candidates?.length));
+      navigate("create"); setFlow(3);
+      renderGenerationProgress(cached ? { ...job, result: cached } : job);
+      if (!$("#candidate-workspace").classList.contains("is-hidden")) renderCandidateWorkspace();
+      pollJob(jobId, button ? null : job);
       return job;
     } catch (error) { toast(error.message, "error"); return null; }
+    finally { setBusy(button, false); }
   }
   async function loadExportRecord(exportId, jobId) {
     try {
@@ -5978,7 +6464,8 @@
     try {
       const base = kind === "export" ? `/exports/${encodeURIComponent(id)}` : `/jobs/${encodeURIComponent(id)}`;
       if (kind === "generation" && ["resume_unfinished", "continue_search"].includes(action)) {
-        const current = await api(base);
+        const current = await readJobSummary(id);
+        if (!current) throw new Error("本地服务未返回这项任务。");
         if (["queued", "running", "paused", "pause_requested", "cancel_requested"].includes(current.status)) {
           await refreshTasks();
           toast("任务已在运行，可点击“查看任务与候选”查看进度。");
@@ -6121,13 +6608,15 @@
     state.calibrationResolveToken += 1;
     state.calibrationSelectionId = null;
     state.calibrationResolvedItems = [];
+    state.calibrationNameOverrides = {};
+    state.calibrationNameEdits.clear();
     state.calibrationNameMatchReady = false;
     state.calibrationNameMatchToken += 1;
     $("#resolved-calibration-templates")?.replaceChildren();
     resetConsumptionCalibration({ clearFile: false });
     updateCalibrationResolveState();
   }
-  async function prepareConsumptionView() {
+  function prepareConsumptionView() {
     renderProfile();
     if (state.recentExport) {
       $("#calibration-recent-export-tab").disabled = false;
@@ -6135,7 +6624,6 @@
       announce("#calibration-recent-export-copy", `可沿用：${names}`);
     }
     if (!state.recentExport && state.calibrationSource === "recent_export") switchCalibrationSource("output_ids");
-    await loadConfigSets();
     updateCalibrationResolveState();
     updateConsumptionCalibrationActionState();
   }
@@ -6163,6 +6651,8 @@
       const payload = await api("/parameters/resolve", { method: "POST", body });
       if (operationToken !== state.calibrationResolveToken || source !== state.calibrationSource) return;
       state.calibrationSelectionId = payload.selection_id;
+      state.calibrationNameOverrides = {};
+      state.calibrationNameEdits.clear();
       resetConsumptionCalibration({ clearFile: false });
       state.calibrationResolvedItems = payload.items || [];
       state.calibrationNameMatchReady = false;
@@ -6191,32 +6681,142 @@
       row.append(name, status); root.append(row);
     });
   }
+  function calibrationBatchAffixes(side) {
+    const checked = $$(`[name="calibration-${side}"]:checked`).map(input => input.value);
+    const custom = $(`#consumption-template-${side}`)?.value || "";
+    return [...new Set([...checked, ...custom.split(/[,，、]/)].map(value => value.trim()).filter(Boolean))];
+  }
+  function calibrationFirstDuplicateDeduction() {
+    return $("#consumption-fixed-first-max")?.checked
+      ? $("#consumption-first-max-deduction-count").value.trim()
+      : null;
+  }
   function calibrationNameMatchContext() {
     const file = state.consumptionHistoryFile;
-    return JSON.stringify([state.calibrationSelectionId, file?.name, file?.size, file?.lastModified, $("#consumption-template-prefix").value.trim(), $("#consumption-template-suffix").value.trim()]);
+    return JSON.stringify([state.calibrationSelectionId, file?.name, file?.size, file?.lastModified, calibrationBatchAffixes("prefix"), calibrationBatchAffixes("suffix"), state.calibrationNameOverrides]);
   }
-  function renderCalibrationMatchStatus(kind, title, message = "", issues = []) {
+  function calibrationNameAffix(name, start, end, side, draft) {
+    if (start === end) throw new Error("请先在模板名里划选字符。");
+    if (side === "prefix" && start !== 0) throw new Error("请从模板名的第一个字符开始选前缀。");
+    if (side === "suffix" && end !== name.length) throw new Error("请选择到模板名的最后一个字符作为后缀。");
+    const selected = name.slice(start, end);
+    if (selected.length > 128) throw new Error("前缀或后缀最多可选 128 个字符。");
+    const next = { ...draft, [side]: selected };
+    if (next.prefix.length + next.suffix.length >= name.length) {
+      throw new Error("前后缀之间至少要保留一个字符。");
+    }
+    return next;
+  }
+  function renderCalibrationNameEditor(item) {
+    const id = item.output_template_id;
+    const name = id.replace(/_m\.bytes$/, "");
+    const saved = Object.hasOwn(state.calibrationNameOverrides, id) ? state.calibrationNameOverrides[id] : null;
+    let draft = state.calibrationNameEdits.get(id) || saved || { prefix: "", suffix: "" };
+    const row = document.createElement("li");
+    row.className = "calibration-name-editor";
+    row.dataset.templateId = id;
+    const controls = document.createElement("div");
+    controls.className = "calibration-name-controls";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.readOnly = true;
+    input.value = name;
+    input.setAttribute("aria-label", `划选模板名 ${name} 的前后缀`);
+    controls.append(input);
+    const preview = document.createElement("span");
+    preview.className = "calibration-name-preview";
+    const feedback = document.createElement("span");
+    feedback.className = "calibration-name-feedback";
+    feedback.setAttribute("role", "status");
+    const button = (label, action, style = "secondary-button") => {
+      const element = document.createElement("button");
+      element.type = "button";
+      element.className = style;
+      element.textContent = label;
+      element.addEventListener("click", action);
+      return element;
+    };
+    const updatePreview = () => {
+      const csvName = name.slice(draft.prefix.length, name.length - draft.suffix.length);
+      preview.textContent = `前缀 ${draft.prefix || "—"} · CSV 模板名 ${csvName} · 后缀 ${draft.suffix || "—"}`;
+      reset.hidden = !saved && !state.calibrationNameEdits.has(id);
+    };
+    const mark = (side) => {
+      try {
+        draft = calibrationNameAffix(name, input.selectionStart, input.selectionEnd, side, draft);
+        state.calibrationNameEdits.set(id, draft);
+        feedback.textContent = "";
+        updatePreview();
+      } catch (error) {
+        feedback.textContent = error.message;
+      }
+    };
+    const apply = button("匹配此模板", () => {
+      state.calibrationNameOverrides = { ...state.calibrationNameOverrides, [id]: draft };
+      state.calibrationNameEdits.delete(id);
+      invalidateConsumptionCalibration();
+      void refreshCalibrationNameMatches(id);
+    });
+    const reset = button("恢复批量匹配", () => {
+      state.calibrationNameEdits.delete(id);
+      if (Object.hasOwn(state.calibrationNameOverrides, id)) {
+        const overrides = { ...state.calibrationNameOverrides };
+        delete overrides[id];
+        state.calibrationNameOverrides = overrides;
+        invalidateConsumptionCalibration();
+        void refreshCalibrationNameMatches(id);
+      } else {
+        draft = { prefix: "", suffix: "" };
+        feedback.textContent = "";
+        updatePreview();
+        input.focus();
+      }
+    }, "text-button");
+    controls.append(button("设为前缀", () => mark("prefix")), button("设为后缀", () => mark("suffix")), apply, reset);
+    const result = document.createElement("span");
+    result.textContent = item.matched_template_id ? `已匹配 ${item.matched_template_id}` : item.message;
+    result.className = "calibration-name-result";
+    updatePreview();
+    row.append(controls, preview, result, feedback);
+    return row;
+  }
+  function renderCalibrationMatchStatus(kind, title, message = "", editable = [], focusId = null) {
     const root = $("#calibration-name-match-status");
+    const scrollTop = root.querySelector("ul")?.scrollTop || 0;
+    const restoreFocus = focusId && root.contains(document.activeElement);
     root.className = `calibration-match-status is-${kind}`;
     root.replaceChildren();
-    const heading = document.createElement("strong"); heading.textContent = title;
-    root.append(heading);
-    if (message) { const copy = document.createElement("p"); copy.textContent = message; root.append(copy); }
-    if (issues.length) {
+    const summary = document.createElement("div");
+    summary.className = "calibration-name-summary";
+    summary.setAttribute("role", "status");
+    const heading = document.createElement("strong");
+    heading.textContent = title;
+    summary.append(heading);
+    if (message) {
+      const copy = document.createElement("p");
+      copy.textContent = message;
+      summary.append(copy);
+    }
+    root.append(summary);
+    if (editable.length) {
       const list = document.createElement("ul");
-      issues.forEach(item => {
-        const row = document.createElement("li");
-        const name = document.createElement("strong"); name.textContent = item.output_template_id || item.source_template_id || "未命名模板";
-        const reason = document.createElement("span"); reason.textContent = item.message || "CSV 中未找到唯一对应的模板";
-        row.append(name, reason); list.append(row);
-      });
-      const action = document.createElement("button"); action.type = "button"; action.className = "secondary-button";
-      action.textContent = "检查模板名前后缀";
-      action.addEventListener("click", () => $("#consumption-template-prefix").focus());
-      root.append(list, action);
+      list.setAttribute("aria-label", "逐模板调整前后缀");
+      list.append(...editable.map(renderCalibrationNameEditor));
+      root.append(list);
+      list.scrollTop = scrollTop;
+    }
+    if (restoreFocus) {
+      const row = [...root.querySelectorAll("[data-template-id]")].find(item => item.dataset.templateId === focusId);
+      if (row) row.querySelector("input").focus({ preventScroll: true });
+      else {
+        summary.tabIndex = -1;
+        summary.focus({ preventScroll: true });
+      }
     }
   }
-  async function refreshCalibrationNameMatches() {
+  async function refreshCalibrationNameMatches(focusId = null) {
+    window.clearTimeout(state.calibrationNameMatchTimer);
+    state.calibrationNameMatchTimer = null;
     const token = ++state.calibrationNameMatchToken;
     const context = calibrationNameMatchContext();
     const current = () => token === state.calibrationNameMatchToken && context === calibrationNameMatchContext();
@@ -6227,29 +6827,46 @@
       renderCalibrationNameMatches();
       return;
     }
-    renderCalibrationMatchStatus("loading", "正在匹配 CSV 中的模板…");
+    if (!focusId) renderCalibrationMatchStatus("loading", "正在匹配 CSV 中的模板…");
+    else {
+      const heading = $("#calibration-name-match-status .calibration-name-summary strong");
+      if (heading) heading.textContent = "正在重新匹配 CSV…";
+    }
     try {
       const body = {
         selection_id: state.calibrationSelectionId,
         history_file: await fileToBase64Payload(state.consumptionHistoryFile, {suffix:".csv", maxBytes:24*1024*1024, label:"历史副本数据"}),
-        template_name_prefix: $("#consumption-template-prefix").value.trim(),
-        template_name_suffix: $("#consumption-template-suffix").value.trim(),
+        template_name_prefixes: calibrationBatchAffixes("prefix"),
+        template_name_suffixes: calibrationBatchAffixes("suffix"),
+        template_name_overrides: state.calibrationNameOverrides,
       };
       if (!current()) return;
       const result = await api("/parameters/match-consumption-templates", {method:"POST", body});
       if (!current()) return;
       state.calibrationNameMatchReady = result.total > 0 && result.matched_count === result.total;
       renderCalibrationNameMatches(result.items || []);
-      const issues = (result.items || []).filter(item => item.status !== "matched");
+      const items = result.items || [];
+      const issues = items.filter(item => item.status !== "matched");
+      const editable = items.filter(item => item.status !== "matched"
+        || Object.hasOwn(state.calibrationNameOverrides, item.output_template_id)
+        || state.calibrationNameEdits.has(item.output_template_id));
+      const guidance = "在模板名里划选开头或结尾，设为前缀或后缀，核对 CSV 模板名后点击「匹配此模板」。";
       if (state.calibrationNameMatchReady) {
-        renderCalibrationMatchStatus("success", `已匹配 ${result.matched_count} / ${result.total} 个模板，可直接生成草案。`);
+        renderCalibrationMatchStatus("success", `已匹配 ${result.matched_count} / ${result.total} 个模板，可直接生成草案。`,
+          editable.length ? guidance : "", editable, focusId);
       } else {
         renderCalibrationMatchStatus("warning", `${issues.length} 个模板尚未匹配到唯一历史数据`,
-          `已匹配 ${result.matched_count} / ${result.total} 个模板，暂不能生成草案。请检查上传的 CSV 是否包含以下模板；名称不一致时可调整前后缀。`, issues);
+          `已匹配 ${result.matched_count} / ${result.total} 个模板。${guidance}`, editable, focusId);
       }
     } catch (error) {
       if (!current()) return;
-      renderCalibrationMatchStatus("error", "历史数据匹配未完成", error.status === 404 ? "模板匹配服务尚未更新，请先导出未保存的候选，再重启工具。" : error.message);
+      const message = error.status === 404 ? "模板匹配服务尚未更新，请先导出未保存的候选，再重启工具。" : error.message;
+      if (focusId) {
+        const summary = $("#calibration-name-match-status .calibration-name-summary");
+        summary.textContent = `历史数据匹配未完成。${message}`;
+      } else {
+        renderCalibrationMatchStatus("error", "历史数据匹配未完成", message);
+      }
     } finally { if (current()) updateConsumptionCalibrationActionState(); }
   }
   function scheduleCalibrationNameMatches() {
@@ -6273,7 +6890,7 @@
       if (input) input.value = "";
       const configInput = $("#consumption-config-level-file");
       if (configInput) configInput.value = "";
-      announce("#consumption-history-file-copy", "包含模板、副本参数、关卡号、进入人数与人均消耗；策略组 ID 非必需");
+      announce("#consumption-history-file-copy", "需含模板 ID、副本号、进入人数和人均消耗；副本参数、策略组 ID 可选");
       announce("#consumption-config-level-file-copy", "默认读取当前 ulinkconfig；仅需覆盖本次计算时上传");
     }
     $("#consumption-calibration-result")?.classList.add("is-hidden");
@@ -6337,7 +6954,6 @@
     const configFile = state.consumptionConfigLevelFile;
     return {
       selectionId: state.calibrationSelectionId || "",
-      configSetId: state.defaultConfigSetId || "",
       profile: {
         id: state.profile?.profile?.profile_id || "",
         source: state.profile?.profile?.template_dir || "",
@@ -6351,11 +6967,13 @@
       targetOverrides,
       seedPolicy: $("#consumption-seed-policy")?.value || "preserve",
       autoFirstDuplicateMax: Boolean($("#consumption-auto-first-max")?.checked),
+      firstDuplicateDeduction: calibrationFirstDuplicateDeduction(),
       strategyGroupId: selectedConsumptionStrategy().id,
       strategyGroupMode: selectedConsumptionStrategy().mode,
       strategyPolicy: $("#consumption-strategy-policy")?.value || "consider",
-      templatePrefix: $("#consumption-template-prefix")?.value.trim() || "",
-      templateSuffix: $("#consumption-template-suffix")?.value.trim() || "",
+      templatePrefixes: calibrationBatchAffixes("prefix"),
+      templateSuffixes: calibrationBatchAffixes("suffix"),
+      templateNameOverrides: state.calibrationNameOverrides,
       firstDuplicateOverrides: state.consumptionFirstDupOverrides,
     };
   }
@@ -6389,6 +7007,7 @@
   function calibrationExpectedSourceCopy(expected) {
     const source = String(expected?.source || "");
     const correction = expected?.structure_correction || {};
+    if (source === "player_behavior_rollout") return expected.player_rollout?.outside_training_range ? "玩家仿真 · 跨关段预估" : "玩家实跑仿真预估";
     if (source === "target_unavailable") return "缺少历史目标";
     if (calibrationIsTransferEstimate(expected) && correction.applied === true) return "跨关段预估";
     if (source === "source_target_empirical_structure_correction" || correction.applied === true) return "按已有测试数据估算";
@@ -6401,8 +7020,10 @@
     return `相似历史样本：${calibrationAssociationCopy(association)} · ${formatCalibrationNumber(count, 0)} 个样本`;
   }
   function calibrationHasPrediction(expected) {
+    if (typeof expected?.value !== "number" || !Number.isFinite(expected.value) || expected.value < 0) return false;
+    if (expected.source === "player_behavior_rollout" && expected.estimate_mode === "player_rollout") return true;
     const correction = expected?.structure_correction || {};
-    return typeof expected?.value === "number" && Number.isFinite(expected.value) && expected.value >= 0 && expected.source !== "target_unavailable" && expected.source !== "source_target_conservative_baseline" && expected.estimate_mode !== "unavailable" && correction.applied !== false && (correction.in_scope !== false || correction.applied === true);
+    return expected.source !== "target_unavailable" && expected.source !== "source_target_conservative_baseline" && expected.estimate_mode !== "unavailable" && correction.applied !== false && (correction.in_scope !== false || correction.applied === true);
   }
   function calibrationIsTransferEstimate(expected) {
     return (expected?.estimate_mode || expected?.structure_correction?.estimate_mode) === "transfer_estimate";
@@ -6440,17 +7061,20 @@
       ? `已读取 CSV 第 ${historyRange.start}–${historyRange.end} 关；`
       : "";
     const assumptionCopy = assumedAnchor ? `加工源原参数消耗暂按${manualTarget ? "本次目标" : "原线上目标"}计算。` : "";
-    if (transferred) return `${historyCopy}使用第 ${scope.level_index_min ?? 200}–${scope.level_index_max ?? 300} 关训练模型进行跨关段预估。${assumptionCopy}结果待后续实测校验。${unestimated.length ? "部分结果缺少必要数据，暂未预估。" : ""}`;
-    if (!unestimated.length) return `${assumptionCopy}${simplified ? "部分结果使用简化模拟，请核对本地配置后重算，或人工确认后再采用。" : ""}`;
+    const rollout = duplicates.find(item => item.expected_consumption?.player_rollout)?.expected_consumption.player_rollout;
+    const rolloutCopy = rollout ? `原盘和入选盘各模拟 ${formatCalibrationNumber(rollout.trials_per_board, 0)} 局，按仿真消耗比例调整原副本的线上实测值。结果需复核。` : "";
+    if (transferred) return `${historyCopy}使用第 ${scope.level_index_min ?? 200}–${scope.level_index_max ?? 300} 关训练模型进行跨关段预估。${assumptionCopy}${rolloutCopy}结果待后续实测校验。${unestimated.length ? "部分结果缺少必要数据，暂未预估。" : ""}`;
+    if (!unestimated.length) return `${assumptionCopy}${rolloutCopy}${simplified ? "部分结果使用简化模拟，请核对本地配置后重算，或人工确认后再采用。" : ""}`;
     const reasons = new Set(unestimated.flatMap(item => item.expected_consumption?.structure_correction?.reasons || []));
     const cause = reasons.has("outside_level_range") ? `内置模型训练来自第 ${scope.level_index_min ?? 200}–${scope.level_index_max ?? 300} 关，旧草案未提供跨关段预估，请重新生成` : reasons.has("outside_structure_count") || reasons.has("unsupported_signature") ? "部分模板的结构缺少可用的消耗估算依据" : reasons.has("outside_strategy_group") ? "所选降难策略缺少对应测试数据" : "部分模板缺少必要的消耗估算数据";
-    return `${historyCopy}${assumptionCopy}${cause}。无法预估消耗的结果仅按模拟排序，不代表消耗已匹配，请人工复核后采用。`;
+    return `${historyCopy}${assumptionCopy}${rolloutCopy}${cause}。无法预估消耗的结果仅按模拟排序，请人工复核后采用。`;
   }
   function calibrationRecommendationCopy(duplicate) {
     if (!calibrationHasPrediction(duplicate.expected_consumption)) {
       const distance = duplicate.synthetic_difficulty?.distance;
       return typeof distance === "number" && Number.isFinite(distance) ? "仅模拟排序" : "待人工确认";
     }
+    if (duplicate.expected_consumption.estimate_mode === "player_rollout") return "仿真 · 需复核";
     if (calibrationIsTransferEstimate(duplicate.expected_consumption)) {
       if (duplicate.recommendation?.status === "transfer_estimate_close") return "预估接近";
       if (duplicate.recommendation?.status === "transfer_estimate_far") return "偏差较大";
@@ -6473,7 +7097,7 @@
     const online = duplicate.original_dup && duplicate.original_dup !== source ? String(duplicate.original_dup) : "";
     return {source, online};
   }
-  function renderConsumptionCalibrationResult() {
+  function renderConsumptionCalibrationResult(focusedTemplate = null) {
     const result = state.consumptionCalibrationResult;
     if (!result) return;
     const coverage = result.coverage || {};
@@ -6518,11 +7142,14 @@
       summary.append(chip);
     });
     const reviewNotice = $("#calibration-review-notice");
-    reviewNotice.textContent = calibrationReviewNotice(result);
+    const skipped = result.skipped_items || [];
+    const skippedCopy = skipped.length ? `有 ${skipped.length} 项暂无法校准，原因见运行记录。` : "";
+    reviewNotice.textContent = [skippedCopy, calibrationReviewNotice(result)].filter(Boolean).join(" ");
     reviewNotice.classList.toggle("is-hidden", !reviewNotice.textContent);
     const templates = $("#consumption-calibration-templates");
-    templates.replaceChildren();
-    (result.rows || []).forEach((item) => {
+    if (!focusedTemplate) templates.replaceChildren();
+    const rows = focusedTemplate ? [focusedTemplate.row] : result.rows || [];
+    rows.forEach((item) => {
       const section = document.createElement("section");
       section.className = "calibration-template-result";
       section.classList.toggle("has-review-items", !item.recommendation_summary?.all_recommended);
@@ -6534,7 +7161,12 @@
       title.textContent = item.output_template_id;
       title.title = `加工源模板：${item.source_template_id}`;
       const meta = document.createElement("span");
-      meta.textContent = `10 档草案${item.canonical_template_id ? ` · 对应 CSV：${item.canonical_template_id}` : ""} · 策略 ${item.strategy_group_id}`;
+      meta.textContent = [
+        "10 档草案",
+        item.history_level_id ? [item.seed_simulation_level_index ? `第 ${item.seed_simulation_level_index} 关` : "", item.history_level_id].filter(Boolean).join(" ") : "",
+        item.canonical_template_id ? `对应 CSV：${item.canonical_template_id}` : "",
+        `策略 ${item.strategy_group_id}`,
+      ].filter(Boolean).join(" · ");
       titleBox.append(title, meta);
       const first = item.duplicates?.[0] || {};
       const adjustment = item.first_duplicate_adjustment || {};
@@ -6557,24 +7189,37 @@
       button.type = "button";
       button.className = "secondary-button";
       button.dataset.recalculateCalibration = item.output_template_id;
+      button.dataset.historyLevelId = item.history_level_id || "";
       button.textContent = "重算本关";
       const note = document.createElement("p");
       note.className = "calibration-recalculate-note";
       const automatic = adjustment.automatic_bounds;
-      note.textContent = automatic
-        ? `按结构块种类自动扣减：A ${automatic.source_a}−${automatic.replaced_a_type_count}=${automatic.a_max}，B ${automatic.source_b}−${automatic.replaced_b_type_count}=${automatic.b_max}；候选可取更低值。`
-        : `可选 ${Number.isFinite(lower) ? lower : "—"}–${Number.isFinite(upper) ? upper : "—"}；Seed 0–31 仿真重算`;
+      if (automatic) {
+        const mode = automatic.mode === "specified_structure_types" ? `指定扣减 ${automatic.specified_count} 种` : "按实际替换种类数扣减";
+        note.textContent = `${mode} · A ${automatic.source_a} → ${automatic.a_max}，B ${automatic.source_b} → ${automatic.b_max}`;
+      } else {
+        note.textContent = `可选 ${Number.isFinite(lower) ? lower : "—"}–${Number.isFinite(upper) ? upper : "—"}；Seed 0–31 仿真重算`;
+      }
       control.append(controlLabel, button, note);
       heading.append(titleBox, control);
       const fallbackReasons = Array.isArray(item.seed_simulation_fallback_reasons)
         ? item.seed_simulation_fallback_reasons.filter(Boolean)
         : [];
+      const fallbackCount = (item.duplicates || []).filter(duplicate => duplicate.seed_simulation?.mode === "synthetic").length;
+      const fallbackCopy = fallbackCount
+        ? `${fallbackCount} 档草案使用简化模拟`
+        : "搜索中的部分候选使用简化模拟";
+      const reasons = fallbackReasons.map(reason => reason.replace(/^[a-z0-9_]+: /, ""));
       const fallbackSummary = document.createElement("p");
       fallbackSummary.className = `calibration-fallback-summary${fallbackReasons.length ? " is-warning" : ""}`;
       const comparison = item.source_parameter_comparison;
-      fallbackSummary.textContent = comparison?.status === "different"
+      const boundsCopy = comparison?.status === "different"
         ? calibrationSearchBoundsCopy(comparison, (item.duplicates || []).some(duplicate => duplicate.target_consumption?.source === "user_override"))
-        : fallbackReasons.length ? "无法按完整配置模拟，已改用简化模拟；请核对配置后重算。" : "";
+        : "";
+      fallbackSummary.textContent = [
+        boundsCopy,
+        reasons.length ? `${fallbackCopy}。原因包括${reasons.join("、")}。` : "",
+      ].filter(Boolean).join(" ");
       fallbackSummary.classList.toggle("is-hidden", !fallbackSummary.textContent);
       const wrap = document.createElement("div");
       wrap.className = "calibration-table-wrap";
@@ -6600,7 +7245,7 @@
         const parameterReference = calibrationParameterReference(duplicate);
         const sourceParameterHtml = `<code>${escapeHtml(parameterReference.source)}</code>${parameterReference.online ? `<small>线上 ${escapeHtml(parameterReference.online)}</small>` : ""}`;
         const seedSimulationCopy = calibrationSeedSimulationCopy(seedSimulation);
-        const seedSimulationReason = seedSimulation.fallback_reason ? "请核对配置后重算" : "";
+        const seedSimulationReason = (seedSimulation.fallback_reason || "").replace(/^[a-z0-9_]+: /, "");
         const observed = (duplicate.observed_effective_strategies || []).join(" / ") || "未记录";
         const rawRule = duplicate.configured_strategy_rule?.raw || "未读取";
         const strategyReplay = seedSimulation.structure_strategy || {};
@@ -6625,11 +7270,22 @@
         row.innerHTML = `<td>${escapeHtml(duplicate.duplicate_index)}</td><td>${sourceParameterHtml}</td><td><code>${escapeHtml(duplicate.fidelity_baseline_dup)}</code></td><td><code>${escapeHtml(duplicate.recommended_dup)}</code></td><td><span class="calibration-recommendation ${recommendation.is_recommended ? "is-recommended" : "is-review"}">${escapeHtml(calibrationRecommendationCopy(duplicate))}</span><small>${escapeHtml(recommendationMeta)}</small></td><td>${escapeHtml(targetCopy)}<small>${escapeHtml(targetMeta)}</small></td><td>${escapeHtml(calibrationExpectedConsumptionCopy(duplicate.expected_consumption))}<small>${escapeHtml(expectedSource)}</small><small>${escapeHtml(historyContext)}</small></td><td>${escapeHtml(calibrationSyntheticCopy(duplicate.synthetic_difficulty))}</td><td>${escapeHtml(seedCopy)}<small>${escapeHtml(luckyCopy)}</small></td><td>${escapeHtml(seedSimulationCopy)}<small>${escapeHtml(seedSimulationReason)}</small></td><td><code>${escapeHtml(rawRule)}</code><small>${escapeHtml(replayCopy)}</small><small>线上记录：${escapeHtml(observed)}</small></td><td>${escapeHtml(calibrationEvidenceCopy(duplicate.evidence_level, seedSimulation))}</td><td class="calibration-alternatives">${alternatives}</td>`;
         body.append(row);
       });
-      table.append(body); wrap.append(table); section.append(heading, fallbackSummary, wrap); templates.append(section);
+      table.append(body); wrap.append(table); section.append(heading, fallbackSummary, wrap);
+      if (focusedTemplate) {
+        const previousSection = focusedTemplate.section;
+        const restoreFocus = previousSection.contains(document.activeElement);
+        const scrollLeft = previousSection.querySelector(".calibration-table-wrap").scrollLeft;
+        previousSection.replaceWith(section);
+        wrap.scrollLeft = scrollLeft;
+        if (restoreFocus) button.focus({ preventScroll: true });
+      } else {
+        templates.append(section);
+      }
     });
     const warnings = $("#consumption-calibration-warnings");
     warnings.replaceChildren();
     const allWarnings = [
+      ...skipped.map(item => `${item.output_template_id}${item.history_level_id ? ` · ${item.history_level_id}` : ""}：${item.reason}`),
       ...(result.warnings || []),
       ...(result.rows || []).flatMap((item) => item.gradient?.warnings || []),
       ...(result.rows || []).flatMap((item) => (item.seed_simulation_fallback_reasons || []).map((reason) => `${item.output_template_id} 的 Seed 牌面已使用简化模拟：${reason}`)),
@@ -6644,8 +7300,14 @@
     }
     $("#consumption-calibration-result").classList.remove("is-hidden");
     $("#write-calibration-config").disabled = !(result.rows || []).length;
+    $("#download-calibration-review").disabled = !(result.rows || []).length;
+    $("#download-calibration-draft").disabled = !(result.rows || []).length;
   }
   async function consumptionCalibrationRequestBody(extra = {}) {
+    const deduction = calibrationFirstDuplicateDeduction();
+    if (deduction !== null && (!/^[0-9]+$/.test(deduction) || Number(deduction) < 1 || Number(deduction) > 12)) {
+      throw new Error("指定扣减种类数必须是 1–12 的整数。");
+    }
     const targetOverrides = {};
     if ($("#consumption-target-mode").value === "manual") {
       $$('[data-consumption-target]').forEach((input) => {
@@ -6662,18 +7324,19 @@
     return {
       selection_id: state.calibrationSelectionId,
       parameter_strategy: "fidelity",
-      ...(state.defaultConfigSetId ? { config_set_id: state.defaultConfigSetId } : {}),
       history_file: await fileToBase64Payload(state.consumptionHistoryFile, { suffix: ".csv", maxBytes: 24 * 1024 * 1024, label: "历史副本数据" }),
       ...(configLevelPayload ? { config_level_file: configLevelPayload } : {}),
       ...(Object.keys(targetOverrides).length ? { target_overrides: targetOverrides } : {}),
       search_observed_seeds: $("#consumption-seed-policy").value === "observed",
       optimize_all_duplicate_seeds: $("#consumption-seed-policy").value === "joint",
       auto_first_duplicate_max: Boolean($("#consumption-auto-first-max")?.checked),
+      ...(deduction === null ? {} : { first_duplicate_structure_deduction_count: Number(deduction) }),
       strategy_group_id: strategy.id,
       strategy_group_mode: strategy.mode,
       consider_structure_strategy: $("#consumption-strategy-policy").value !== "ignore",
-      template_name_prefix: $("#consumption-template-prefix").value.trim(),
-      template_name_suffix: $("#consumption-template-suffix").value.trim(),
+      template_name_prefixes: calibrationBatchAffixes("prefix"),
+      template_name_suffixes: calibrationBatchAffixes("suffix"),
+      template_name_overrides: state.calibrationNameOverrides,
       ...extra,
     };
   }
@@ -6718,7 +7381,27 @@
       throw error;
     }
     while (calibrationOperationIsCurrent(operation)) {
-      renderConsumptionCalibrationProgress(record);
+      if (record.status === "awaiting_confirmation") {
+        const { template_id, duplicate_index, reason } = record.fallback_confirmation;
+        const explanation = reason.replace(/^[a-z0-9_]+: /, "");
+        const proceed = window.confirm(
+          `${template_id} · 副本 ${duplicate_index} 无法完成整盘仿真。\n${explanation}。\n\n确定后，本次任务遇到无法整盘仿真的情况时会使用简化模拟。取消将结束本次任务。`
+        );
+        record = await api(`/parameters/consumption-calibration-jobs/${encodeURIComponent(record.job_id)}/fallback`, {
+          method: "POST", body: { proceed },
+        });
+        if (!proceed) {
+          if (!body.focus_output_template_id) $("#consumption-calibration-progress").classList.add("is-hidden");
+          return null;
+        }
+        continue;
+      }
+      if (record.status === "cancelled") {
+        if (!body.focus_output_template_id) $("#consumption-calibration-progress").classList.add("is-hidden");
+        toast("校准已取消。");
+        return null;
+      }
+      if (!body.focus_output_template_id) renderConsumptionCalibrationProgress(record);
       if (record.status === "completed") {
         if (!record.result) throw new Error("校准任务未返回审阅结果，请重试。");
         return record.result;
@@ -6737,13 +7420,16 @@
     const selectionId = state.calibrationSelectionId;
     const operationToken = ++state.consumptionCalibrationToken;
     const operation = { token: operationToken, selectionId, fingerprint: consumptionCalibrationFingerprint() };
+    const previousResult = state.consumptionCalibrationResult;
+    const previousFingerprint = state.consumptionCalibrationFingerprint;
+    const resultPanel = $("#consumption-calibration-result");
     try {
       if (!selectionId) throw new Error("请先确认要校准的新模板。");
       if (!state.consumptionHistoryFile) throw new Error("请选择历史副本数据 CSV。");
       const requestFingerprint = consumptionCalibrationFingerprint();
       setBusy(button, true, "正在生成审阅草案…");
       state.consumptionCalibrationFingerprint = null;
-      $("#consumption-calibration-result").classList.add("is-hidden");
+      resultPanel.classList.add("is-hidden");
       renderConsumptionCalibrationProgress({ status: "queued", progress: { message: "正在提交校准任务…" } });
       revealConsumptionCalibrationStage("progress");
       const result = await requestConsumptionCalibration(await consumptionCalibrationRequestBody(), operation);
@@ -6755,19 +7441,33 @@
       state.consumptionCalibrationFingerprint = requestFingerprint;
       renderConsumptionCalibrationResult();
       revealConsumptionCalibrationStage("result");
-      toast(`已生成 ${result.rows?.length || 0} 个模板的消耗校准审阅草案。`);
+      const skippedCount = result.skipped_items?.length || 0;
+      toast(`已生成 ${result.rows?.length || 0} 项校准草案${skippedCount ? `，${skippedCount} 项待处理` : ""}。`);
     } catch (error) {
       if (calibrationOperationIsCurrent(operation)) {
         renderConsumptionCalibrationProgress({ status: "failed", error: { message: error.message } });
         toast(error.message, "error");
       }
     }
-    finally { setBusy(button, false); updateConsumptionCalibrationActionState(); }
+    finally {
+      if (previousResult && state.consumptionCalibrationResult === previousResult
+          && calibrationOperationIsCurrent(operation)) {
+        state.consumptionCalibrationFingerprint = previousFingerprint;
+        resultPanel.classList.remove("is-hidden");
+      }
+      setBusy(button, false);
+      updateConsumptionCalibrationActionState();
+    }
   }
   async function recalculateConsumptionTemplate(outputTemplateId, trigger) {
     const runButton = $("#run-consumption-calibration");
     if (runButton.dataset.isBusy === "true") return;
-    const input = $(`[data-calibration-first-max="${CSS.escape(outputTemplateId)}"]`);
+    const section = trigger.closest?.(".calibration-template-result");
+    const field = `[data-calibration-first-max="${CSS.escape(outputTemplateId)}"]`;
+    const input = section?.querySelector(field) || $(field);
+    const historyLevelId = trigger.dataset?.historyLevelId || "";
+    const sameItem = (item) => item.output_template_id === outputTemplateId
+      && (item.history_level_id || "") === historyLevelId;
     const value = Number(input?.value);
     const minimum = Number(input?.min); const maximum = Number(input?.max);
     if (!Number.isInteger(value) || value < minimum || value > maximum) {
@@ -6783,40 +7483,40 @@
       toast("配置或输入已变化，请先重新生成整批审阅草案。", "error");
       return;
     }
+    if (!section) return;
     const operation = { token: ++state.consumptionCalibrationToken, selectionId: state.calibrationSelectionId, fingerprint: consumptionCalibrationFingerprint() };
     try {
       setBusy(trigger, true, "正在重算…");
       setBusy(runButton, true, "正在重算…");
       input.disabled = true;
       state.consumptionCalibrationFingerprint = null;
-      renderConsumptionCalibrationProgress({ status: "queued", progress: { message: "正在提交重算任务…", current_template: outputTemplateId } });
-      revealConsumptionCalibrationStage("progress");
       const result = await requestConsumptionCalibration(await consumptionCalibrationRequestBody({
+          config_set_id: previous.config_set_id,
           focus_output_template_id: outputTemplateId,
+          ...(historyLevelId ? { focus_history_level_id: historyLevelId } : {}),
           first_duplicate_max: value,
           simulate_first_duplicate_seeds: true,
           search_observed_seeds: false,
         }), operation);
       if (!result || !calibrationOperationIsCurrent(operation)) return;
-      const replacement = result.rows?.[0];
+      const replacement = result.rows?.find(sameItem);
       if (!replacement) throw new Error("本关没有生成可用的重算结果。");
       state.consumptionFirstDupOverrides = {
         ...state.consumptionFirstDupOverrides,
-        [outputTemplateId]: value,
+        [JSON.stringify([outputTemplateId, historyLevelId])]: value,
       };
       state.consumptionCalibrationResult = {
         ...previous,
         warnings: [...new Set([...(previous.warnings || []), ...(result.warnings || [])])],
         rows: (previous.rows || []).map((item) => (
-          item.output_template_id === outputTemplateId ? replacement : item
+          sameItem(item) ? replacement : item
         )),
       };
       state.consumptionCalibrationFingerprint = consumptionCalibrationFingerprint();
-      renderConsumptionCalibrationResult();
+      renderConsumptionCalibrationResult({ row: replacement, section });
       toast(`${outputTemplateId} 已按首副本最高参数 ${value} 重算，已比较 Seed 0–31。`);
     } catch (error) {
       if (calibrationOperationIsCurrent(operation)) {
-        renderConsumptionCalibrationProgress({ status: "failed", error: { message: error.message } });
         toast(error.message, "error");
       }
     }
@@ -6826,6 +7526,26 @@
       setBusy(trigger, false); setBusy(runButton, false); updateConsumptionCalibrationActionState();
     }
   }
+  function calibrationDeliveryOptions() {
+    const mode = $("#calibration-level-id-mode").value;
+    const naming = { mode };
+    if (mode.startsWith("custom_")) {
+      naming.prefix = $("#calibration-level-id-prefix").value.trim();
+      naming.suffix = $("#calibration-level-id-suffix").value.trim();
+      if (!naming.prefix && !naming.suffix) {
+        $("#calibration-level-id-prefix").focus();
+        throw new Error("请填写前缀或后缀。");
+      }
+    }
+    const description = $("#calibration-description").value.trim();
+    return { naming, ...(description ? { description } : {}) };
+  }
+  function calibrationDeliveryPayload(result, options) {
+    return {
+      config_set_id: result.config_set_id, rows: result.rows, ...options,
+      ...(result.calibration_context ? { calibration_context: result.calibration_context } : {}),
+    };
+  }
   async function writeConsumptionCalibrationConfig() {
     const result = state.consumptionCalibrationResult;
     if (!result?.rows?.length) return;
@@ -6834,10 +7554,10 @@
     }
     const button = $("#write-calibration-config");
     try {
+      const body = calibrationDeliveryPayload(result, calibrationDeliveryOptions());
       setBusy(button, true, "正在安全写入…");
       const payload = await api("/parameters/write-calibration-config", {
-        method: "POST",
-        body: { config_set_id: result.config_set_id || state.defaultConfigSetId, rows: result.rows, ...(result.calibration_context ? { calibration_context: result.calibration_context } : {}) },
+        method: "POST", body,
       });
       const reviewCount = (result.rows || []).reduce((sum, item) => (
         sum + (item.duplicates || []).filter((duplicate) => duplicate.recommendation?.is_recommended === false).length
@@ -6868,6 +7588,7 @@
     headers.push("对应CSV模板ID", "加工源与线上源配置比较", "加工源首副本上限", "搜索源参数", "模拟次级差异_诊断");
     headers.push("预估方式", "消耗模型版本", "模型训练关段", "加工源消耗按本次目标_假设", "预估参照参数", "区间说明");
     headers.push("本次目标消耗", "目标调整原因", "沿用目标副本", "首副本自动上限A", "首副本自动上限B");
+    headers.push("关卡ID", "关卡位置");
     const rows = (result.rows || []).flatMap((item) => (item.duplicates || []).map((duplicate) => {
       const target = duplicate.target_consumption || {}; const association = duplicate.historical_association || {}; const range = association.range || [];
       const expected = duplicate.expected_consumption || {}; const expectedRange = expected.range || []; const correction = expected.structure_correction || {};
@@ -6905,36 +7626,61 @@
         anchor.source_dup || calibrationParameterReference(duplicate).source, intervalCopy,
         target.value, target.adjustment ? "线上消耗回升，沿用前一副本目标" : "",
         target.adjustment?.previous_duplicate_index ?? "", automaticBounds.a_max ?? "", automaticBounds.b_max ?? "",
+        item.history_level_id || "", item.seed_simulation_level_index ?? "",
       ];
     }));
     downloadCsvFile(headers, rows, `目标消耗校准审阅_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.csv`);
   }
-  function downloadCalibrationDraftCsv() {
-    const result = state.consumptionCalibrationResult; if (!result) return;
+  async function exportCalibrationDraft() {
+    const result = state.consumptionCalibrationResult; if (!result?.rows?.length) return;
     if (state.consumptionCalibrationFingerprint !== consumptionCalibrationFingerprint()) {
       invalidateConsumptionCalibration(); toast("校准输入已变化，请重新生成审阅草案。", "error"); return;
     }
-    const headers = ["修改后模板ID", "修改前模板ID", ...Array.from({ length: 10 }, (_, index) => `DupPara${index + 1}`), "StrategyGroupId", "结构策略仿真", "Seed方案", "Lucky", "审阅状态", "结论边界"];
+    const button = $("#download-calibration-draft");
+    try {
+      const options = calibrationDeliveryOptions();
+      setBusy(button, true, "正在准备草案…");
+      const plan = await api("/parameters/preview-calibration-level-ids", {
+        method: "POST", body: calibrationDeliveryPayload(result, options),
+      });
+      if (state.consumptionCalibrationResult !== result
+        || state.consumptionCalibrationFingerprint !== consumptionCalibrationFingerprint()
+        || JSON.stringify(options) !== JSON.stringify(calibrationDeliveryOptions())) {
+        toast("导出设置已变化，请重新导出。", "error");
+        return;
+      }
+      if (!Array.isArray(plan.level_ids) || plan.level_ids.length !== result.rows.length) throw new Error("未能分配完整的新关卡 ID。");
+      downloadCalibrationDraftCsv(result, plan.level_ids, options.description);
+    } catch (error) { toast(error.message, "error"); }
+    finally { setBusy(button, false); }
+  }
+  function downloadCalibrationDraftCsv(result, levelIds, description = "") {
+    const headers = ["LevelId", "Des", "修改后模板ID", "修改前模板ID", ...Array.from({ length: 10 }, (_, index) => `DupPara${index + 1}`), "StrategyGroupId", "结构策略仿真", "Seed方案", "Lucky", "审阅状态", "结论边界"];
     headers.push("对应CSV模板ID", "加工源首副本上限");
     headers.push("预估方式", "消耗模型版本", "模型训练关段", "加工源消耗按本次目标_假设");
-    const rows = (result.rows || []).map((item) => {
+    headers.push("原关卡ID", "关卡位置");
+    const rows = (result.rows || []).map((item, rowIndex) => {
       const duplicates = item.duplicates || [];
       const predictions = duplicates.map(duplicate => duplicate.expected_consumption).filter(Boolean);
       const expected = predictions.filter(calibrationHasPrediction);
-      const modelIds = [...new Set([...predictions.map(value => value.model_id || value.structure_correction?.model_id), result.consumption_prediction_model?.model_id].filter(Boolean))];
-      const scope = predictions[0]?.training_scope || predictions[0]?.structure_correction?.training_scope || result.consumption_prediction_model?.scope || {};
-      const trainingRange = Number.isInteger(scope.level_index_min) && Number.isInteger(scope.level_index_max) ? `${scope.level_index_min}–${scope.level_index_max}` : "";
+      const modelIds = [...new Set(predictions.map(value => value.model_id || value.structure_correction?.model_id).filter(Boolean))];
+      const scopeRange = scope => Number.isInteger(scope?.level_index_min) && Number.isInteger(scope?.level_index_max)
+        ? `${scope.level_index_min}–${scope.level_index_max}` : "";
+      const trainingRanges = [...new Set(expected.map(value => scopeRange(value.training_scope)).filter(Boolean))];
       const assumedAnchor = item.consumption_anchor?.kind === "processed_source_assumed_equal_online" || duplicates.some(duplicate => duplicate.consumption_anchor?.kind === "processed_source_assumed_equal_online");
-      const estimateMode = expected.some(calibrationIsTransferEstimate) ? "跨关段预估" : expected.length ? "按已有测试数据估算" : "未预估";
+      const estimateMode = [...new Set(expected.map(calibrationExpectedSourceCopy))].join(" / ") || "未预估";
       return [
-        item.output_template_id, item.source_template_id,
+        levelIds[rowIndex], description, item.output_template_id, item.source_template_id,
         ...Array.from({ length: 10 }, (_, index) => duplicates[index]?.recommended_dup || ""),
         item.strategy_group_id, result.consider_structure_strategy ? "考虑所选策略" : "忽略结构降难",
         result.seed_search?.mode === "joint_ab_seed_0_31" ? "A/B + Seed 0–31 联合搜索" : item.search_observed_seeds ? "在已观测 Seed 中搜索（含原 Seed）" : "保留原 Seed",
         "保留原值", item.recommendation_summary?.all_recommended ? "全部推荐" : "含人工确认候选",
         "模拟估算；写入前请审阅；不保证线上精确达成", item.canonical_template_id || "",
-        item.source_parameter_comparison?.first_duplicate_max ?? "", estimateMode, modelIds.join(" / "), trainingRange,
+        item.source_parameter_comparison?.first_duplicate_max ?? "", estimateMode,
+        modelIds.join(" / ") || result.consumption_prediction_model?.model_id || "",
+        trainingRanges.join(" / ") || scopeRange(result.consumption_prediction_model?.scope),
         assumedAnchor ? "是" : "否",
+        item.history_level_id || "", item.seed_simulation_level_index ?? "",
       ];
     });
     downloadCsvFile(headers, rows, `DupPara校准草案_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.csv`);
@@ -7066,12 +7812,10 @@
     try {
       const payload = await api("/parameters/config-sets");
       populateConfigSetSelect(onlineSelect, payload.config_sets || [], "未找到成对配置表");
-      state.defaultConfigSetId = onlineSelect.value || "";
       $("#calculate-parameters").disabled = !state.parameterSelectionId || !onlineSelect.value;
       updateParameterResolveState();
       updateConsumptionCalibrationActionState();
     } catch (error) {
-      state.defaultConfigSetId = "";
       populateConfigSetSelect(onlineSelect, [], "配置表读取失败");
       updateParameterResolveState(); updateConsumptionCalibrationActionState(); toast(error.message, "error");
     }
@@ -7299,7 +8043,7 @@
         else run();
         return;
       }
-      const load = event.target.closest("[data-load-job]"); if (load) { loadJob(load.dataset.loadJob); return; }
+      const load = event.target.closest("[data-load-job]"); if (load) { loadJob(load.dataset.loadJob, load); return; }
       const loadExport = event.target.closest("[data-load-export]"); if (loadExport) { loadExportRecord(loadExport.dataset.loadExport, loadExport.dataset.jobId); return; }
       const parameterTab = event.target.closest("[data-param-source]"); if (parameterTab && !parameterTab.disabled) { switchParameterSource(parameterTab.dataset.paramSource); return; }
       const calibrationTab = event.target.closest("[data-calibration-source]"); if (calibrationTab && !calibrationTab.disabled) { switchCalibrationSource(calibrationTab.dataset.calibrationSource); return; }
@@ -7321,9 +8065,6 @@
         tabs[next].focus();
         return;
       }
-      if (!['Enter', ' '].includes(event.key)) return;
-      const row = event.target.closest?.("[data-load-job]");
-      if (row) { event.preventDefault(); loadJob(row.dataset.loadJob); }
     });
     $("#template-ids").addEventListener("input", () => { $("#template-id-count").textContent = `已输入 ${uniqueLines($("#template-ids").value).length} 项`; updateImportActionState(); });
     $("#template-files").addEventListener("change", (event) => { state.importFiles = [...event.target.files]; renderFileList("#template-file-list", state.importFiles); updateImportActionState(); });
@@ -7391,6 +8132,17 @@
     $("#regenerate").addEventListener("click", () => { if (!$("#lock-seed").checked && state.seedWasAutoResolved) { state.seed = ""; state.seedWasAutoResolved = false; $("#batch-seed").value = ""; } startGeneration(); });
     $("#work-prev").addEventListener("click", () => setActiveWork(state.activeWorkIndex - 1));
     $("#work-next").addEventListener("click", () => setActiveWork(state.activeWorkIndex + 1));
+    $("#open-bulk-selection").addEventListener("click", () => {
+      $("#bulk-selection-status").textContent = "";
+      $("#bulk-selection-dialog").showModal();
+    });
+    $("#bulk-selection-form").addEventListener("submit", runBulkCandidateSelection);
+    $("#cancel-bulk-selection").addEventListener("click", () => $("#bulk-selection-dialog").close());
+    $("#bulk-selection-dialog").addEventListener("close", () => {
+      if ($("#bulk-selection-dialog").open) return;
+      state.bulkSelectionRun = null;
+      setBusy($("#apply-bulk-selection"), false);
+    });
     $("#clear-work-selection").addEventListener("click", clearActiveWorkSelection);
     $("#complete-work-selection").addEventListener("click", completeActiveWorkSelection);
     $("#candidate-prev").addEventListener("click", () => { state.candidatePage -= 1; renderCandidateCards(); }); $("#candidate-next").addEventListener("click", () => { state.candidatePage += 1; renderCandidateCards(); });
@@ -7416,8 +8168,7 @@
     $("#trace-timeline").addEventListener("input", () => { stopPlayer(); state.player.step = Number($("#trace-timeline").value); renderPlayer(); });
     $("#trace-speed").addEventListener("change", () => { if (state.player.timer) { stopPlayer(); togglePlayer(); } });
     $("#back-to-candidates").addEventListener("click", () => {
-      const terminal = ["completed", "failed", "cancelled"].includes(state.exportSnapshot?.status);
-      if (terminal) resetExportViewContext();
+      if (state.exportSnapshot?.status === "completed") resetExportViewContext();
       setFlow(3); window.setTimeout(() => $("#review-selections")?.focus(), 0);
     }); $("#export-selected").addEventListener("click", exportSelected);
     $("#export-pause").addEventListener("click", () => controlCurrentExport($("#export-pause").dataset.action || "pause"));
@@ -7447,7 +8198,8 @@
       if (event.target === $("#help-dialog")) closeHelpDialog();
       const result = event.target.closest?.("[data-help-result-target]");
       if (result) {
-        openHelpTarget(result.dataset.helpResultTarget);
+        const terms = helpSearchTerms($("#help-search-input").value).highlights;
+        openHelpTarget(result.dataset.helpResultTarget, "instant", terms);
         return;
       }
       const inlineHelp = event.target.closest?.("[data-help-link]");
@@ -7505,6 +8257,7 @@
       if (event.target === $("#template-adjustment-dialog")) $("#template-adjustment-dialog").close("cancel");
     });
     $("#close-candidate-parameter").addEventListener("click", () => $("#candidate-parameter-dialog").close());
+    $$("[data-open-batch-parameters]").forEach(button => button.addEventListener("click", openBatchGenerationParameters));
     $("#candidate-parameter-dialog").addEventListener("click", (event) => {
       if (event.target === $("#candidate-parameter-dialog")) $("#candidate-parameter-dialog").close();
     });
@@ -7526,7 +8279,6 @@
     $("#resolve-parameter-templates").addEventListener("click", resolveParameterTemplates); $("#choose-ulink-path").addEventListener("click", chooseUlinkFromParameter);
     $("#choose-unlaunched-ulink-path").addEventListener("click", chooseUlinkFromParameter);
     $("#calculate-parameters").addEventListener("click", calculateParameters); $("#download-parameter-csv").addEventListener("click", downloadParameterCsv);
-    $("#config-set-select").addEventListener("change", () => { state.defaultConfigSetId = $("#config-set-select").value; invalidateConsumptionCalibration(); });
     $("#calibration-template-ids").addEventListener("input", updateCalibrationResolveState);
     $("#calibration-template-files").addEventListener("change", (event) => { state.calibrationFiles = [...event.target.files]; renderFileList("#calibration-template-file-list", state.calibrationFiles); updateCalibrationResolveState(); });
     const calibrationDrop = $('label[for="calibration-template-files"]');
@@ -7539,7 +8291,7 @@
       invalidateConsumptionCalibration();
       announce(
         "#consumption-history-file-copy",
-        file ? `${file.name} · ${Math.max(1, Math.round(file.size / 1024))} KB` : "包含模板、副本参数、进入人数与人均消耗；策略组 ID 非必需",
+        file ? `${file.name} · ${Math.max(1, Math.round(file.size / 1024))} KB` : "需含模板 ID、副本号、进入人数和人均消耗；副本参数、策略组 ID 可选",
       );
       updateConsumptionCalibrationActionState();
       refreshCalibrationNameMatches();
@@ -7555,12 +8307,25 @@
     });
     $("#consumption-target-mode").addEventListener("change", () => { invalidateConsumptionCalibration(); syncConsumptionTargetMode(); });
     $("#consumption-seed-policy").addEventListener("change", () => { invalidateConsumptionCalibration(); syncConsumptionSeedPolicy(); });
-    $("#consumption-auto-first-max").addEventListener("change", invalidateConsumptionCalibration);
+    const actualCapOption = $("#consumption-auto-first-max");
+    const fixedCapOption = $("#consumption-fixed-first-max");
+    const fixedCapCount = $("#consumption-first-max-deduction-count");
+    const updateDeduction = (changed, other) => {
+      if (changed.checked) other.checked = false;
+      fixedCapCount.disabled = !fixedCapOption.checked;
+      invalidateConsumptionCalibration();
+    };
+    actualCapOption.addEventListener("change", () => updateDeduction(actualCapOption, fixedCapOption));
+    fixedCapOption.addEventListener("change", () => updateDeduction(fixedCapOption, actualCapOption));
+    fixedCapCount.addEventListener("input", invalidateConsumptionCalibration);
     $("#consumption-strategy-source").addEventListener("change", () => {
       invalidateConsumptionCalibration(); syncConsumptionSeedPolicy();
     });
     $("#consumption-strategy-policy").addEventListener("change", () => { invalidateConsumptionCalibration(); syncConsumptionSeedPolicy(); });
-    ["#consumption-template-prefix", "#consumption-template-suffix"].forEach(selector => $(selector).addEventListener("input", () => { invalidateConsumptionCalibration(); scheduleCalibrationNameMatches(); }));
+    $$(".calibration-affix-field input").forEach(input => input.addEventListener("input", () => {
+      invalidateConsumptionCalibration();
+      scheduleCalibrationNameMatches();
+    }));
     $$("[data-consumption-target]").forEach((input) => input.addEventListener("input", invalidateConsumptionCalibration));
     $("#run-consumption-calibration").addEventListener("click", runConsumptionCalibration);
     $("#consumption-calibration-templates").addEventListener("click", (event) => {
@@ -7568,8 +8333,12 @@
       if (trigger) recalculateConsumptionTemplate(trigger.dataset.recalculateCalibration, trigger);
     });
     $("#download-calibration-review").addEventListener("click", downloadCalibrationReviewCsv);
-    $("#download-calibration-draft").addEventListener("click", downloadCalibrationDraftCsv);
+    $("#download-calibration-draft").addEventListener("click", exportCalibrationDraft);
     $("#write-calibration-config").addEventListener("click", writeConsumptionCalibrationConfig);
+    $("#calibration-level-id-mode").addEventListener("change", (event) => {
+      const custom = event.target.value.startsWith("custom_");
+      $$("[data-calibration-id-affix]").forEach(label => label.classList.toggle("is-hidden", !custom));
+    });
   }
 
   function showLocalPathSetup(payload) {

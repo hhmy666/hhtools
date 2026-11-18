@@ -36,9 +36,10 @@ test('single-layer source preview excludes lower layers without changing source 
   assert.equal(container.innerHTML.match(/viewBox="([^"]+)"/)[1],viewBox);
 });
 
-test('history navigation refreshes shared progress before choosing terminal review layout',()=>{
+test('history navigation shows the summary before starting candidate synchronization',()=>{
   const load=source.slice(source.indexOf('  async function loadJob('),source.indexOf('  async function loadExportRecord('));
-  const refresh=load.indexOf('renderGenerationProgress(job);');
-  const terminalBranch=load.indexOf('if (state.jobResult && successfulWorkItems().length');
-  assert.ok(refresh>0 && refresh<terminalBranch);
+  const refresh=load.indexOf('renderGenerationProgress(');
+  const synchronize=load.indexOf('pollJob(jobId,');
+  assert.ok(refresh>0 && refresh<synchronize);
+  assert.doesNotMatch(load,/await\s+(api|readJobDetails|pollJob)\(/);
 });

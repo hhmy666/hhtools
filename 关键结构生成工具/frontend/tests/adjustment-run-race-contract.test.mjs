@@ -69,3 +69,43 @@ test("resume uses the captured job and all run controls share the mutex", () => 
   assert.ok(runControlAssignments.length >= 2, "single-run and batch-run buttons must share the mutex");
   assert.match(appSource, /function invalidateAdjustmentRun\(\)/);
 });
+
+test("selected recommendations submit one child job with matching overrides and scopes", async () => {
+  const source = functionSource("function derivedRetryScopeFields", "function runSingleStagedTemplate");
+  const overrides = [
+    { template_key: "one", plan_id: "batch_s6", changes: { max_layer_percent: 82 } },
+    { template_key: "two", plan_id: "batch_s6", changes: { max_layer_percent: 82 } },
+  ];
+  const entries = overrides.map((override, index) => ({
+    templateKey: override.template_key, planId: "resolved_s6",
+    recommendationId: String(index), sourcePlanId: override.plan_id,
+  }));
+  const items = entries.map(entry => ({ template_key: entry.templateKey, plan_id: entry.planId }));
+  const requests = [];
+  const state = { jobId: "parent", jobSnapshot: { import_id: "import" }, jobResult: {}, selectedCandidates: new Map() };
+  const run = Function(
+    "state", "$", "api", "HTMLElement", "document", "toast", "unfinishedCandidateItems",
+    "candidateAdjustmentKey", "retryScopeForItem", "beginAdjustmentRun",
+    "adjustmentRunContextIsCurrent", "setBusy", "endAdjustmentRun",
+    `${source}\nreturn runStagedTemplateAdjustments;`,
+  )(
+    state, () => null,
+    async (path, { body }) => {
+      requests.push({ path, body });
+      if (path.endsWith("/recommendations/apply")) {
+        return { continue_request: { body: { parameter_overrides: [overrides[Number(body.recommendation_id)]] } } };
+      }
+      return { job_id: "child" };
+    },
+    class {}, {}, () => {}, () => items,
+    item => `${item.template_key}::${item.plan_id}`,
+    item => ({ template_key: item.template_key, plan_id: item.plan_id }),
+    () => ({}), () => requests.length < 3, () => {}, () => {},
+  );
+  await run(entries);
+  assert.deepEqual(requests[2], { path: "/jobs", body: {
+    import_id: "import", parent_job_id: "parent", parameter_overrides: overrides,
+    retry_scopes: overrides.map(({ template_key, plan_id }) => ({ template_key, plan_id })),
+  } });
+  assert.equal(requests.length, 3);
+});

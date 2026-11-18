@@ -120,6 +120,24 @@ class SnapshotServiceTests(unittest.TestCase):
         with self.assertRaises(InputValidationError):
             store.load(created.snapshot_set_id, profile=self.profile)
 
+    def test_load_selected_snapshot_ignores_unselected_missing_source(self) -> None:
+        store = SourceSnapshotStore(self.app_data)
+        other = self.root / "hr0030_m.bytes"
+        other_data = _template_bytes("hr0030")
+        other.write_bytes(other_data)
+        created = store.create(
+            {"hr0029": self.source, "hr0030": other},
+            batch_seed=123, source_config_hash=self.config_hash,
+            normalized_config_json=self.normalized, profile=self.profile,
+        )
+        digest = hashlib.sha256(other_data).hexdigest()
+        (self.app_data / "source-snapshots" / created.snapshot_set_id / f"{digest}_m.bytes").unlink()
+        loaded = store.load(created.snapshot_set_id, profile=self.profile, template_keys={"hr0029"})
+        self.assertEqual(set(loaded.sources), {"hr0029"})
+        self.assertEqual(loaded.sources["hr0029"].level.data, self.data)
+        with self.assertRaises(InputValidationError):
+            store.load(created.snapshot_set_id, profile=self.profile, template_keys={"hr0030"})
+
     def test_snapshot_store_cannot_be_inside_formal_output(self) -> None:
         store = SourceSnapshotStore(self.output)
         with self.assertRaises(InputValidationError):

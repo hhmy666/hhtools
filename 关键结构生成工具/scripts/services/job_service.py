@@ -26,6 +26,7 @@ from puzzle_core.search import (
     ALGORITHM_VERSION,
     Candidate,
     canonical_structure_identity,
+    check_single_unit_layer_span,
     GenerationOptions,
     feasible_structure_count_limit,
     effective_structure_count_minimum,
@@ -886,6 +887,15 @@ def generate_batch(
                 source.level, item.generation_options, item.plan.tower_mode)
             minimum_structure_count = effective_structure_count_minimum(
                 source.level, item.generation_options, item.plan.tower_mode)
+            if len(item.plan.units) == 1 and item.generation_options.min_same_type_layer_span:
+                binding = item.parameter_binding
+                minimum_types = (
+                    min(binding.unit_specs[0].type_count.domain("unit.type_count"))
+                    if binding is not None else item.generation_options.unit_options[0].type_count
+                )
+                check_single_unit_layer_span(
+                    source.level, item.plan, item.generation_options, minimum_types,
+                )
             while len(generated_items) < target_candidate_count and shared_attempts < effective_attempt_budget:
                 candidate_index = next(index for index in range(1, target_candidate_count + 1)
                                        if index not in completed_candidate_slots)

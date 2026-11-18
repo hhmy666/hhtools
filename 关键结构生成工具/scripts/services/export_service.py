@@ -35,10 +35,6 @@ from puzzle_core.errors import (
     InputValidationError,
     ReconciliationRequiredError,
 )
-from puzzle_core.difficulty import (
-    difficulty_profile_from_simulation,
-    simulate_candidate_difficulty,
-)
 from puzzle_core.models import ResolvedOutputPlan
 from puzzle_core.naming import naming_family, versioned_template_id
 from puzzle_core.planning import canonical_json, config_hash
@@ -51,7 +47,6 @@ from puzzle_core.rewrite import rewrite_template, verify_rewrite
 from puzzle_core.search import (
     ALGORITHM_VERSION,
     GenerationOptions,
-    evaluate_candidate_experience,
 )
 from puzzle_core.template_reader import parse_level_bytes
 from puzzle_core.validator import validate_candidate
@@ -284,7 +279,7 @@ def new_idempotency_key() -> str:
     return str(uuid.uuid4())
 
 
-def _validate_idempotency_key(value: str) -> str:
+def validate_idempotency_key(value: str) -> str:
     try:
         parsed = uuid.UUID(str(value))
     except (ValueError, AttributeError, TypeError) as exc:
@@ -574,48 +569,6 @@ def _puzzle_semantic_payload(selection: ExportSelection, content_hash: str) -> d
     }
 
 
-def _recompute_validated_evidence(
-    selection: ExportSelection,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Recompute the dynamic evidence retained by formal export.
-
-    ``validate_candidate`` independently checks the same values, but its stable
-    report intentionally contains only compact conclusions.  Formal export
-    needs the complete versioned simulation and reveal evidence for replay, so
-    this boundary recomputes it once more and retains that recomputed value --
-    never an unchecked UI/job payload.
-    """
-
-    candidate = selection.generated.candidate
-    difficulty_profile = difficulty_profile_from_simulation(
-        candidate.difficulty_simulation
-    )
-    difficulty = simulate_candidate_difficulty(
-        selection.source.level,
-        candidate.replacements,
-        target=selection.generation_options.quality.difficulty_target,
-        profile=difficulty_profile,
-        requested_archetype=(
-            selection.generation_options.quality.experience_archetype
-        ),
-    )
-    if dict(candidate.difficulty_simulation) != difficulty:
-        raise ExportConflictError(
-            "候选携带的难度模拟与导出阶段独立重算不一致"
-        )
-    experience = evaluate_candidate_experience(
-        selection.source.level,
-        candidate,
-        selection.generation_options.quality,
-        difficulty,
-    )
-    if dict(candidate.experience_analysis) != experience:
-        raise ExportConflictError(
-            "候选携带的整板体验证据与导出阶段独立重算不一致"
-        )
-    return difficulty, experience
-
-
 def _prepare_selections(
     selections: Sequence[ExportSelection],
     *,
@@ -648,9 +601,11 @@ def _prepare_selections(
             require_exportable_experience=False,
         )
         validation_passed = bool(validation.passed)
-        difficulty_simulation, experience_analysis = (
-            _recompute_validated_evidence(selection)
-        )
+        # The validator already recomputes both complete payloads and rejects
+        # any mismatch. Reuse the evidence it has just verified.
+        candidate = selection.generated.candidate
+        difficulty_simulation = candidate.difficulty_simulation
+        experience_analysis = candidate.experience_analysis
         current_override_record = inconclusive_evidence_record(
             difficulty_simulation,
             experience_analysis,
@@ -933,7 +888,7 @@ def _audit_workspace(
     *,
     current_key: str,
     workspace_id: str,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], set[str]]:
     """Audit naming integrity without requiring archived outputs to stay put.
 
     Completed ledgers reserve identities forever. Their files may be moved by
@@ -1073,6 +1028,7 @@ def _audit_workspace(
         registered_bytes_paths.add(bytes_path.resolve())
         registered_manifest_paths.add(manifest_path.resolve())
 
+    unregistered_ids = set()
     for path in output_root.iterdir():
         folded_name = _nfc_casefold(path.name)
         if not (
@@ -1082,7 +1038,8 @@ def _audit_workspace(
         ):
             continue
         if path.resolve() not in registered_bytes_paths:
-            raise ReconciliationRequiredError("检测到孤立正式 bytes", evidence={"path": str(path)})
+            _safe_target(output_root, path.name)
+            unregistered_ids.add(folded_name.removesuffix("_m.bytes"))
     reports = _safe_target(output_root, REPORTS_DIRECTORY)
     if reports.exists():
         for path in reports.glob("*/manifests/*_manifest.json"):
@@ -1110,7 +1067,7 @@ def _audit_workspace(
                         "检测到没有可变账本归属的孤立事务清单",
                         evidence={"path": str(path)},
                     )
-    return records
+    return records, unregistered_ids
 
 
 def _next_batch_id(output_root: Path, now: _datetime.datetime | None) -> str:
@@ -1134,7 +1091,8 @@ def _next_batch_id(output_root: Path, now: _datetime.datetime | None) -> str:
 
 
 def _next_versions(
-    records: Sequence[Mapping[str, Any]], prepared: Sequence[_PreparedSelection]
+    records: Sequence[Mapping[str, Any]], prepared: Sequence[_PreparedSelection],
+    unregistered_ids: set[str],
 ) -> list[int]:
     maxima: dict[tuple[str, str], int] = {}
     for record in records:
@@ -1156,6 +1114,8 @@ def _next_versions(
             _nfc_casefold(item.signature),
         )
         value = maxima.get(key, 0) + 1
+        while _nfc_casefold(versioned_template_id(item.selection.source.level.template_id, item.selection.plan, value)) in unregistered_ids:
+            value += 1
         maxima[key] = value
         allocated.append(value)
     return allocated
@@ -1941,7 +1901,7 @@ def export_selected(
 
     if task_control is not None:
         task_control.checkpoint("export_validate_request")
-    key = _validate_idempotency_key(request.idempotency_key)
+    key = validate_idempotency_key(request.idempotency_key)
     output_root = validate_output_root(
         request.profile.output_root,
         tile_repo_root=request.profile.tile_repo_root,
@@ -1979,7 +1939,7 @@ def export_selected(
                 task_control.mark_completed()
             return result
 
-        records = _audit_workspace(
+        records, unregistered_ids = _audit_workspace(
             output_root,
             control,
             current_key=key,
@@ -1990,7 +1950,7 @@ def export_selected(
         _validate_naming_namespace(records, prepared)
         _duplicate_check(records, prepared, request.allow_duplicate_as_new_version)
         batch_id = _next_batch_id(output_root, now)
-        versions = _next_versions(records, prepared)
+        versions = _next_versions(records, prepared, unregistered_ids)
         _validate_output_id_namespace(records, prepared, versions)
         timestamp = _utc_timestamp(now)
         ledger, staged, _outputs = _build_transaction(
@@ -2039,4 +1999,5 @@ __all__ = [
     "export_selected",
     "inconclusive_evidence_record",
     "new_idempotency_key",
+    "validate_idempotency_key",
 ]

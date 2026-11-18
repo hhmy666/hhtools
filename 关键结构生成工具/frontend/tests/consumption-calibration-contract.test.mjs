@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import vm from "node:vm";
 
 const html = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const app = fs.readFileSync(new URL("../assets/app.js", import.meta.url), "utf8");
@@ -20,7 +21,7 @@ test("calibration inputs follow source strategy and optional config rules", () =
   assert.ok(html.includes("模拟结果仅供参考，不保证线上消耗一致"));
   assert.ok(html.includes('id="consumption-history-file"'));
   assert.ok(html.includes("上传原关卡的 Tile关卡副本数据.csv"));
-  assert.ok(html.includes("策略组 ID 非必需"));
+  assert.ok(html.includes("副本参数、策略组 ID 可选"));
   assert.ok(html.includes('id="consumption-config-level-file"'));
   assert.ok(html.includes("默认读取当前 ulinkconfig"));
   assert.ok(html.includes('id="consumption-strategy-source"'));
@@ -81,6 +82,26 @@ test("expected consumption distinguishes calibrated fit from historical context"
   assert.ok(app.includes("相似历史样本仅供对照"));
   assert.ok(!app.includes("预期消耗来自历史邻近关联"));
   assert.ok(!app.includes("expected?.value ?? association?.point"));
+});
+
+test("player rollout displays a consumption value even outside the old structure model", () => {
+  const helpers = app.slice(
+    app.indexOf("  function calibrationExpectedSourceCopy("),
+    app.indexOf("  function calibrationSearchBoundsCopy("),
+  );
+  const ui = vm.createContext({formatCalibrationNumber: String});
+  vm.runInContext(helpers, ui);
+  const estimate = {
+    value: 2984,
+    difference: -21,
+    source: "player_behavior_rollout",
+    estimate_mode: "player_rollout",
+    structure_correction: {applied: false, reasons: ["unsupported_signature"]},
+  };
+  assert.equal(ui.calibrationExpectedConsumptionCopy(estimate), "2984·与目标 -21");
+  assert.equal(ui.calibrationExpectedSourceCopy(estimate), "玩家实跑仿真预估");
+  assert.equal(ui.calibrationRecommendationCopy({expected_consumption: estimate}), "仿真 · 需复核");
+  assert.equal(ui.calibrationHasPrediction({...estimate, value: null}), false);
 });
 
 test("calibration result and recalculate controls remain aligned and scrollable", () => {

@@ -93,6 +93,7 @@ class CapacityProof:
     settled_peak: int
     recommended_order: tuple[int, ...] | None
     shortest_failure_order: tuple[int, ...] | None
+    witness_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -116,9 +117,12 @@ class PuzzleProof:
     recommended_gate_click: int | None
     recommended_path_constraints_ok: bool
     capacity_proofs: tuple[CapacityProof, ...]
+    earliest_gate_click: int | None = None
 
     @property
     def minimum_structure_step(self) -> int:
+        if self.earliest_gate_click is not None:
+            return self.earliest_gate_click - 3 * self.required_pre_gate_recycles
         return min(self.threshold_steps)
 
     @property
@@ -126,7 +130,10 @@ class PuzzleProof:
         return max(self.threshold_steps)
 
     def as_dict(self) -> dict[str, object]:
-        return asdict(self)
+        result = asdict(self)
+        if self.earliest_gate_click is None:
+            result.pop("earliest_gate_click")
+        return result
 
 
 def _bag_as_tiles(counts: Sequence[int], labels: Sequence[str]) -> tuple[str, ...]:
@@ -687,7 +694,7 @@ def proof_state_budget_exceeded(blocker_masks: tuple[int, ...], max_states: int)
         nodes = [i for i in range(n) if remaining & (1 << i)]
         if all(ancestors[i] & remaining == 1 << i for i in nodes):
             return min(max_states + 1, 1 << len(nodes))
-        pivot = max(nodes, key=lambda i: min(bin(ancestors[i] & remaining).count("1"), bin(descendants[i] & remaining).count("1")))
+        pivot = max(nodes, key=lambda i: min((ancestors[i] & remaining).bit_count(), (descendants[i] & remaining).bit_count()))
         included = count(remaining & ~ancestors[pivot])
         if included > max_states:
             return max_states + 1
@@ -701,6 +708,27 @@ def proof_state_budget_exceeded(blocker_masks: tuple[int, ...], max_states: int)
         count.cache_clear()
 
 
+@lru_cache(maxsize=128)
+def gate_ancestor_masks(masks: tuple[int, ...]) -> tuple[int, ...]:
+    ancestors = [mask | (1 << i) for i, mask in enumerate(masks)]
+    for j in range(len(masks)):
+        for i in range(len(masks)):
+            if ancestors[i] & (1 << j):
+                ancestors[i] |= ancestors[j]
+    return tuple(ancestors)
+
+
+def earliest_gate_triple_click(masks: tuple[int, ...], types: tuple[str, ...], gate: str) -> int:
+    """Every triple forces its ancestor closure, which is itself playable."""
+    ancestors = gate_ancestor_masks(masks)
+    return min(
+        (a | b | c).bit_count()
+        for a, b, c in combinations(
+            (ancestors[i] for i, label in enumerate(types) if label == gate), 3,
+        )
+    )
+
+
 def has_direct_gate_triple(masks, types, gate, *, below_step=4, required_pre_gate_recycles=None):
     """A sufficient witness below the requested step (default: s3).
 
@@ -708,11 +736,7 @@ def has_direct_gate_triple(masks, types, gate, *, below_step=4, required_pre_gat
     exactly three gate tiles, remove a maximal gate tile last. The residues
     of all other types give its exact bag pressure. False remains unknown.
     """
-    ancestors = [mask | (1 << i) for i, mask in enumerate(masks)]
-    for j in range(len(types)):
-        for i in range(len(types)):
-            if ancestors[i] & (1 << j):
-                ancestors[i] |= ancestors[j]
+    ancestors = gate_ancestor_masks(tuple(masks))
     label_masks = {label: sum(1 << i for i, value in enumerate(types) if value == label) for label in set(types)}
     for triple in combinations((i for i, value in enumerate(types) if value == gate), 3):
         closure = ancestors[triple[0]] | ancestors[triple[1]] | ancestors[triple[2]]
@@ -766,7 +790,53 @@ def _merge_residues(a, b, bounded):
     return tuple(value if bounded & (1 << i) else value % 3 for i, value in enumerate(values))
 
 
-def _analyze_small_alphabet(masks, types, gate, capacities, limits, first_recycle_lead_tiles, reject_invalid_target=None):
+def _find_safe_completion(masks, types, gate, capacity, order, prefix_length, limit):
+    """Seek a concrete safe suffix while preserving the proved gate prefix."""
+    simulation = simulate_order(order, types, threshold_type=gate, capacity=capacity)
+    if simulation.complete:
+        return order
+    if simulation.failed_at is None or simulation.failed_at <= prefix_length:
+        return None
+
+    prefix = order[:prefix_length]
+    labels = tuple(sorted(set(types)))
+    indices = tuple(labels.index(label) for label in types)
+    removed = sum(1 << index for index in prefix)
+    bag = tuple(sum(types[index] == label for index in prefix) % 3 for label in labels)
+    full = (1 << len(masks)) - 1
+    dead = set()
+    remaining_budget = min(limit, 8192)
+
+    def visit(removed, bag):
+        nonlocal remaining_budget
+        if removed == full:
+            return ()
+        if not remaining_budget or removed in dead:
+            return None
+        remaining_budget -= 1
+        if remaining_budget % 128 == 0:
+            _poll_proof()
+        choices = []
+        for index in available_indices(removed, masks):
+            next_bag, _, _, settled, failed = _click_counts(bag, indices[index], capacity)
+            if not failed:
+                choices.append((settled, -bag[indices[index]], index, next_bag))
+        for _, _, index, next_bag in sorted(choices):
+            suffix = visit(removed | (1 << index), next_bag)
+            if suffix is not None:
+                return (index, *suffix)
+        dead.add(removed)
+        return None
+
+    suffix = visit(removed, bag)
+    return None if suffix is None else prefix + suffix
+
+
+def _analyze_small_alphabet(
+    masks, types, gate, capacities, limits, first_recycle_lead_tiles,
+    reject_invalid_target=None, allow_capacity_witness=False,
+    required_pre_gate_recycles=0, recycle_order=None,
+):
     """Exact order-ideal DP; return None when capacity needs path search.
 
     Every ideal extends to a complete topological order; total type counts
@@ -777,6 +847,8 @@ def _analyze_small_alphabet(masks, types, gate, capacities, limits, first_recycl
     also charge each convolution to the proof budget, including cache hits.
     No sampling or difficulty/validation relaxation is involved. Capacity
     cases not proved universally safe still fall back to exact path search.
+    With a recycle witness, raw pressure values remain diagnostic. The
+    certified optimum is the earliest gate click at the configured count.
     """
     n = len(types)
     full = (1 << n) - 1
@@ -814,7 +886,7 @@ def _analyze_small_alphabet(masks, types, gate, capacities, limits, first_recycl
 
     @lru_cache(maxsize=8192)
     def counts(bits):
-        return tuple(bin(bits & mask).count('1') for mask in label_masks)
+        return tuple((bits & mask).bit_count() for mask in label_masks)
 
     @lru_cache(None)
     def ideals(remaining, bounded):
@@ -843,8 +915,8 @@ def _analyze_small_alphabet(masks, types, gate, capacities, limits, first_recycl
                             return result
             return result
         nodes = [i for i in range(n) if remaining & (1 << i)]
-        pivot = max(nodes, key=lambda i: min(bin(ancestors[i] & remaining).count('1'),
-                                             bin(descendants[i] & remaining).count('1')))
+        pivot = max(nodes, key=lambda i: min((ancestors[i] & remaining).bit_count(),
+                                             (descendants[i] & remaining).bit_count()))
         included = ancestors[pivot] & remaining
         excluded = ideals(remaining & ~descendants[pivot], bounded)
         if len(excluded) == residue_domain_size:
@@ -897,23 +969,36 @@ def _analyze_small_alphabet(masks, types, gate, capacities, limits, first_recycl
                 literal.add(step)
                 if label == gate:
                     constrained_witnesses.setdefault(step, (witness, index))
-    if constrained_witnesses:
+    if constrained_witnesses and not required_pre_gate_recycles:
         threshold_witnesses = constrained_witnesses
     desired = min(threshold_witnesses)
+    earliest_click = None
+    if recycle_order is not None:
+        # Each previous triple consumes three clicks. At a fixed recycle
+        # count, a lower gate pressure would require an earlier gate click.
+        # Prove that no order can reach a gate triple before this witness,
+        # even when its other clicks and recycle count are unrestricted.
+        earliest_click = earliest_gate_triple_click(masks, types, gate)
+        desired = earliest_click - 3 * required_pre_gate_recycles
     if reject_invalid_target is not None and desired != reject_invalid_target:
         ideals.cache_clear()
         counts.cache_clear()
         raise CandidateValidationError('已证明门槛步数不匹配，跳过其余验证', evidence={'reason': 'gate_step_mismatch'})
     recommended_capacity = 7 if desired <= 7 else (8 if desired == 8 else None)
-    if (any(capacity <= peak for capacity in capacities)
-            or (k > 5 and recommended_capacity is not None
-                and recommended_capacity <= peak)):
+    mixed_capacities = any(capacity <= peak for capacity in capacities)
+    if (k > 5 and recommended_capacity is not None and recommended_capacity <= peak
+            and recommended_capacity not in capacities):
         ideals.cache_clear()
         counts.cache_clear()
         return None
-    constraints_ok = desired in constrained_witnesses
-    prefix, gate_tile = (constrained_witnesses if constraints_ok else threshold_witnesses)[desired]
-
+    if mixed_capacities and not (
+        allow_capacity_witness and 4 <= desired <= 7
+        and (recycle_order is not None or desired in constrained_witnesses)
+        and proof_state_budget_exceeded(masks, limits.max_states)
+    ):
+        ideals.cache_clear()
+        counts.cache_clear()
+        return None
     def extend(removed, target):
         order = []
         while removed != target:
@@ -922,10 +1007,56 @@ def _analyze_small_alphabet(masks, types, gate, capacities, limits, first_recycl
             removed |= 1 << index
         return tuple(order)
 
-    recommended = extend(0, prefix) + (gate_tile,) + extend(prefix | (1 << gate_tile), full)
+    constraints_ok = desired in constrained_witnesses
+    if recycle_order is not None:
+        recommended = recycle_order
+    else:
+        prefix, gate_tile = (constrained_witnesses if constraints_ok else threshold_witnesses)[desired]
+        recommended = extend(0, prefix) + (gate_tile,) + extend(prefix | (1 << gate_tile), full)
     simulation = simulate_order(recommended, types, threshold_type=gate, capacity=None)
     gate_click = next(step.click_number for step in simulation.steps if step.gate_structure_step is not None)
     pre_recycles = sum(step.matched_type is not None and step.click_number < gate_click for step in simulation.steps)
+    if required_pre_gate_recycles:
+        if (gate_click != earliest_click or simulation.gate_structure_step != desired
+                or pre_recycles != required_pre_gate_recycles
+                or simulation.literal_first_match_click < 3 + first_recycle_lead_tiles):
+            ideals.cache_clear()
+            counts.cache_clear()
+            return None
+        if recommended_capacity is not None and recommended_capacity <= peak:
+            recommended = _find_safe_completion(
+                masks, types, gate, recommended_capacity, recommended, gate_click, limits.max_states,
+            )
+            if recommended is None:
+                ideals.cache_clear()
+                counts.cache_clear()
+                return None
+        constraints_ok = True
+
+    mixed_proofs = {}
+    for capacity in capacities:
+        if capacity > peak:
+            continue
+        safe_order = _find_safe_completion(
+            masks, types, gate, capacity, recommended, gate_click, limits.max_states,
+        )
+        if safe_order is None:
+            ideals.cache_clear()
+            counts.cache_clear()
+            return None
+        # Any reachable ideal whose settled bag fills the capacity proves a
+        # failure path: some click on the way to it must first fill the bag.
+        # The verified safe path proves the other half of the classification.
+        # Its count is a lower bound and its peaks describe that path only.
+        safe = simulate_order(safe_order, types, threshold_type=gate, capacity=capacity)
+        mixed_proofs[capacity] = CapacityProof(
+            capacity=capacity, states_explored=work, complete_path_count=1,
+            path_count_capped=False, complete_exists=True, failure_reachable=True,
+            minimum_failure_click=None, gate_reachable=safe.gate_reached,
+            classification="safe_and_failure_paths", instantaneous_peak=safe.instantaneous_peak,
+            settled_peak=safe.settled_peak, recommended_order=safe_order,
+            shortest_failure_order=None, witness_only=True,
+        )
 
     @lru_cache(None)
     def paths(removed):
@@ -942,7 +1073,7 @@ def _analyze_small_alphabet(masks, types, gate, capacities, limits, first_recycl
     path_count = paths(0)
     capped = path_count >= limits.max_path_count
     # Every reachable ideal has pressure below capacity, so all paths are safe.
-    capacity_proofs = tuple(CapacityProof(
+    capacity_proofs = tuple(mixed_proofs[capacity] if capacity in mixed_proofs else CapacityProof(
         capacity=capacity, states_explored=work, complete_path_count=path_count,
         path_count_capped=capped, complete_exists=True, failure_reachable=False,
         minimum_failure_click=None, gate_reachable=True, classification='all_safe',
@@ -956,11 +1087,12 @@ def _analyze_small_alphabet(masks, types, gate, capacities, limits, first_recycl
         singleton_rule_ok=violation is None,
         singleton_violation_order=None if violation is None else extend(0, violation[1]),
         singleton_violation_types=() if violation is None else tuple(label for label, value in zip(labels, violation[0]) if value == 1),
-        recommended_order=recommended, required_pre_gate_recycles=0,
+        recommended_order=recommended, required_pre_gate_recycles=required_pre_gate_recycles,
         first_recycle_lead_tiles=first_recycle_lead_tiles, recommended_pre_gate_recycles=pre_recycles,
         recommended_first_match_click=simulation.literal_first_match_click,
         recommended_gate_click=gate_click, recommended_path_constraints_ok=constraints_ok,
         capacity_proofs=capacity_proofs,
+        earliest_gate_click=earliest_click,
     )
     ideals.cache_clear()
     paths.cache_clear()
@@ -978,12 +1110,17 @@ def analyze_puzzle(
     required_pre_gate_recycles: int = 0,
     first_recycle_lead_tiles: int = 2,
     reject_invalid_target: int | None = None,
+    allow_capacity_witness: bool = False,
+    recycle_order: Sequence[int] | None = None,
 ) -> PuzzleProof:
     """Exhaustively prove a single static puzzle unit.
 
-    A result is returned only after the complete state space fits within the
-    configured proof budget.  Budget exhaustion raises instead of silently
-    downgrading a partial search to a proof.
+    By default, a result requires exact capacity statistics. With
+    allow_capacity_witness, a proved s4–s7 gate and replayable safe paths can
+    establish capacity classifications when exhaustive counting exceeds
+    the budget. Such capacity records explicitly mark their witness scope.
+    A recycle_order supplies a candidate trace for that mode. The graph,
+    earliest gate click, recycle count, and capacity are independently checked.
     """
 
     masks = tuple(int(mask) for mask in blocker_masks)
@@ -1008,10 +1145,30 @@ def analyze_puzzle(
     capacities = tuple(int(value) for value in capacities)
     if (len(types) > 24 and len(set(types)) <= len(STRUCTURE_TYPES)
             and required_pre_gate_recycles == 0):
-        compressed = _analyze_small_alphabet(masks, types, gate, capacities, actual_limits, first_recycle_lead_tiles, reject_invalid_target)
+        compressed = _analyze_small_alphabet(
+            masks, types, gate, capacities, actual_limits, first_recycle_lead_tiles,
+            reject_invalid_target, allow_capacity_witness,
+        )
         if compressed is not None:
             return compressed
-    if proof_state_budget_exceeded(masks, actual_limits.max_states):
+    geometry_exceeds_budget = proof_state_budget_exceeded(masks, actual_limits.max_states)
+    if (geometry_exceeds_budget and required_pre_gate_recycles and recycle_order is not None
+            and len(types) > 24 and len(set(types)) <= 5):
+        order = tuple(recycle_order)
+        removed = 0
+        for index in order:
+            if not 0 <= index < len(masks) or removed & (1 << index) or masks[index] & ~removed:
+                raise CandidateValidationError("回收轨迹包含不可点击的结构块")
+            removed |= 1 << index
+        if removed != (1 << len(masks)) - 1:
+            raise CandidateValidationError("回收轨迹未覆盖全部结构块")
+        compressed = _analyze_small_alphabet(
+            masks, types, gate, capacities, actual_limits, first_recycle_lead_tiles,
+            reject_invalid_target, allow_capacity_witness, required_pre_gate_recycles, order,
+        )
+        if compressed is not None:
+            return compressed
+    if geometry_exceeds_budget:
         raise ProofLimitExceeded(
             "当前结构几何的必需证明状态数超过上限",
             evidence={"max_states": actual_limits.max_states, "geometry_preflight": True},

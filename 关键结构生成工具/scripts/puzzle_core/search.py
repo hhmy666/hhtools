@@ -44,6 +44,7 @@ from .solver import (
     minimum_gate_structure_step,
     proof_state_budget_exceeded,
     has_direct_gate_triple,
+    gate_ancestor_masks,
     proof_checkpoints,
     simulate_order,
     validate_target,
@@ -1009,6 +1010,49 @@ def _layer_window_pools(level, pool, maximum_span, required_count):
     return tuple(window for window in windows if len(window) >= required_count)
 
 
+def _can_span_all_types(layers: Sequence[int], type_count: int, minimum_span: int) -> bool:
+    """The lowest and highest disjoint endpoints maximize the possible gaps."""
+    if len(layers) < 2 * type_count:
+        return False
+    ordered = sorted(layers)
+    return all(
+        high - low >= minimum_span
+        for low, high in zip(ordered[:type_count], ordered[-type_count:])
+    )
+
+
+def check_single_unit_layer_span(
+    level: LevelTemplate,
+    plan: ResolvedOutputPlan,
+    options: GenerationOptions,
+    minimum_type_count: int,
+) -> None:
+    span = options.min_same_type_layer_span
+    if not span or len(plan.units) != 1:
+        return
+    unit = options.unit_options[0]
+    pool = _base_eligible(
+        level, build_static_geometry(level), options,
+        tower_membership=False, tower_mode=plan.tower_mode,
+    )
+    layers = tuple(
+        level.tiles[index].layer
+        for index in pool
+        if unit.max_layer is None or level.tiles[index].layer <= unit.max_layer
+    )
+    if not _can_span_all_types(layers, minimum_type_count, span):
+        raise NoCandidateError(
+            f"当前可用位置无法让 {minimum_type_count} 种结构块分别跨至少 {span} 层，"
+            "请调整同种结构块最小间隔层或最高层限制",
+            evidence={
+                "rejection_counts": {"same_type_layer_span_infeasible": 1},
+                "eligible_tiles_by_layer": dict(sorted(Counter(layers).items())),
+                "required_type_count": minimum_type_count,
+                "minimum_same_type_span": span,
+            },
+        )
+
+
 def _allocate_labels(
     unit_options: Sequence[UnitGenerationOptions],
     global_allowed: Sequence[str],
@@ -1085,9 +1129,9 @@ def _guided_zero_recycle_assignment(
         minimum, premature = len(masks) + 1, 0
         for x, y, z in triples:
             closure = ancestors[positions[x]] | ancestors[positions[y]] | ancestors[positions[z]]
-            if bin(closure & bits[gate]).count('1') != 3:
+            if (closure & bits[gate]).bit_count() != 3:
                 continue
-            other_counts = [bin(closure & bit).count('1')
+            other_counts = [(closure & bit).bit_count()
                             for label, bit in enumerate(bits) if label != gate]
             if any(count >= 3 for count in other_counts):
                 continue
@@ -1118,6 +1162,7 @@ def _guided_zero_recycle_assignment(
                     with proof_checkpoints(checkpoint):
                         proof = analyze_puzzle(masks, types, threshold_type=labels[gate],
                                                limits=limits, reject_invalid_target=target,
+                                               allow_capacity_witness=True,
                                                first_recycle_lead_tiles=first_recycle_lead_tiles)
                     if validate_target(proof, target)[0]:
                         return types, labels[gate], proof
@@ -1131,6 +1176,147 @@ def _guided_zero_recycle_assignment(
             else:
                 assigned[x], assigned[y] = assigned[y], assigned[x]
     return None
+
+
+def _repair_tail_layer_spans(sequence, order, tile_layers, labels, minimum_span, prefix_length, fixed_label=None):
+    """Preserve the intended first match while widening narrow types in the tail."""
+    layers = tuple(tile_layers[index] for index in order)
+    positions = {label: [] for label in labels}
+    for index, label in enumerate(sequence):
+        positions[label].append(index)
+
+    def deficit(indices, replaced=-1, replacement=-1):
+        values = [layers[replacement if index == replaced else index] for index in indices]
+        return max(0, minimum_span - (max(values) - min(values)))
+
+    remaining = {label: deficit(indices) for label, indices in positions.items()}
+    for _ in labels:
+        if not any(remaining.values()):
+            return True
+        best = None
+        best_gain = 0
+        for label in labels:
+            if not remaining[label] or label == fixed_label:
+                continue
+            for outgoing in positions[label]:
+                if outgoing < prefix_length:
+                    continue
+                for incoming in range(prefix_length, len(sequence)):
+                    donor = sequence[incoming]
+                    if donor == label or donor == fixed_label:
+                        continue
+                    new_deficit = deficit(positions[label], outgoing, incoming)
+                    if new_deficit >= remaining[label]:
+                        continue
+                    donor_deficit = deficit(positions[donor], incoming, outgoing)
+                    if donor_deficit > remaining[donor]:
+                        continue
+                    gain = remaining[label] + remaining[donor] - new_deficit - donor_deficit
+                    if gain > best_gain:
+                        best = label, donor, outgoing, incoming, new_deficit, donor_deficit
+                        best_gain = gain
+        if best is None:
+            return False
+        label, donor, outgoing, incoming, remaining[label], remaining[donor] = best
+        sequence[outgoing], sequence[incoming] = donor, label
+        positions[label].remove(outgoing)
+        positions[label].append(incoming)
+        positions[donor].remove(incoming)
+        positions[donor].append(outgoing)
+    return not any(remaining.values())
+
+
+def _plan_recycle_assignment(masks, labels, groups, gate, target, recycles, lead, rng, guide_gate):
+    """Construct a legal opening with complete non-gate sets and a final gate triple."""
+    totals = dict(zip(labels, (3 * count for count in groups)))
+    others = [label for label in labels if label != gate]
+    rng.shuffle(others)
+    remaining = totals.copy()
+    recycle_labels = []
+    for _ in range(recycles):
+        choices = [label for label in others if remaining[label] >= 3]
+        if not choices:
+            return None
+        label = rng.choice(choices)
+        recycle_labels.append(label)
+        remaining[label] -= 3
+    supports = [label for label in others for _ in range(min(2, remaining[label]))]
+    if len(supports) < target - 3:
+        return None
+    rng.shuffle(supports)
+    first, *later = recycle_labels
+    before = [gate, gate, *supports[:target - 3], *(label for label in later for _ in range(3))]
+    rng.shuffle(before)
+    opening = [first, first]
+    counts = Counter(opening)
+    for label in before:
+        if len(opening) == 2 + lead:
+            break
+        if counts[label] < 2:
+            opening.append(label)
+            counts[label] += 1
+    if len(opening) != 2 + lead:
+        return None
+    rest = Counter(before + [first, first])
+    rest.subtract(opening)
+    prefix = [*opening, first, *(label for label in others for _ in range(rest[label])),
+              *([gate] * rest[gate]), gate]
+    remaining = Counter(totals)
+    remaining.subtract(prefix)
+    if not guide_gate:
+        order = _random_topological_order(masks, rng)
+        return order, prefix + [label for label in [*others, gate] for _ in range(remaining[label])]
+
+    gate_count = remaining[gate]
+    gate_click = len(prefix)
+    ancestors = gate_ancestor_masks(masks)
+    finishers = [i for i, closure in enumerate(ancestors) if 1 < closure.bit_count() <= gate_click]
+    if not finishers:
+        return None
+    finishers.sort(key=lambda i: ancestors[i].bit_count(), reverse=True)
+    finisher = rng.choice(finishers[:8])
+    mandatory = ancestors[finisher] ^ (1 << finisher)
+    removed = 0
+    opening_order = []
+    for _ in range(gate_click - 1):
+        ready = [i for i in available_indices(removed, masks) if i != finisher]
+        choices = [i for i in ready if mandatory & (1 << i)] or ready
+        if not choices:
+            return None
+        index = rng.choice(choices)
+        opening_order.append(index)
+        removed |= 1 << index
+    if mandatory & ~removed:
+        return None
+    opening_order.append(finisher)
+    removed |= 1 << finisher
+    gate_sites = [i for i, label in zip(opening_order, prefix) if label == gate]
+    if (ancestors[gate_sites[0]] | ancestors[gate_sites[1]] | ancestors[finisher]).bit_count() != gate_click:
+        return None
+    tail = [i for i in range(len(masks)) if not removed & (1 << i)]
+    rng.shuffle(tail)
+    tail.sort(key=lambda i: ancestors[i].bit_count(), reverse=True)
+    for index in tail:
+        if gate_count == 0:
+            break
+        closure = ancestors[index]
+        if all((closure | ancestors[a] | ancestors[b]).bit_count() >= gate_click
+               for a, b in combinations(gate_sites, 2)):
+            gate_sites.append(index)
+            gate_count -= 1
+    if gate_count:
+        return None
+    gate_tail = set(gate_sites[3:])
+    remaining_labels = iter(label for label in others for _ in range(remaining[label]))
+    order = opening_order
+    sequence = prefix
+    while len(order) < len(masks):
+        ready = available_indices(removed, masks)
+        index = rng.choice(ready)
+        order.append(index)
+        sequence.append(gate if index in gate_tail else next(remaining_labels))
+        removed |= 1 << index
+    return tuple(order), sequence
 
 
 def _find_type_assignment(
@@ -1153,19 +1339,25 @@ def _find_type_assignment(
     if min_same_type_layer_span:
         if len(tile_layers) != len(blocker_masks):
             raise InputValidationError("同种结构块层间距检查缺少完整层信息")
-        if max(tile_layers, default=0) - min(tile_layers, default=0) < min_same_type_layer_span:
+        if not _can_span_all_types(tile_layers, len(labels), min_same_type_layer_span):
             if assignment_diagnostics is not None:
                 assignment_diagnostics["same_type_layer_span"] += 1
             return None
-    # Every assignment uses this same geometry and must pass the full proof.
-    # If geometry alone exceeds its budget, shuffling labels cannot repair it.
-    compressed_proof = len(blocker_masks) > 24 and len(labels) <= len(STRUCTURE_TYPE_TO_ID) and required_pre_gate_recycles == 0
+    # All assignments share the graph. A geometry over budget needs a
+    # compressed proof before label placement can produce useful results.
+    large_unit = len(blocker_masks) > 24
+    compressed_proof = large_unit and required_pre_gate_recycles == 0
     with proof_checkpoints(cooperative_checkpoint):
         geometry_exceeds_budget = (
             not compressed_proof
             and proof_state_budget_exceeded(blocker_masks, solver_limits.max_states)
         )
-    if geometry_exceeds_budget:
+    guided_recycle = (
+        geometry_exceeds_budget and large_unit and len(labels) <= 5
+        and required_pre_gate_recycles > 0 and 4 <= target <= 7
+    )
+    compressed_proof = compressed_proof or guided_recycle
+    if geometry_exceeds_budget and not guided_recycle:
         if assignment_diagnostics is not None:
             assignment_diagnostics['assignment_geometry_proof_budget'] += 1
         return None
@@ -1180,17 +1372,38 @@ def _find_type_assignment(
             return guided
     multiset = [label for label, group_count in zip(labels, groups) for _ in range(3 * group_count)]
     gates = (locked_gate.upper(),) if locked_gate else labels
+    if guided_recycle and not locked_gate:
+        gates = tuple(label for label, group in zip(labels, groups) if group == min(groups))
     tested_assignments: set[tuple[tuple[int, ...], int]] = set()
-    for _assignment_index in range(assignment_attempts):
+    assignments = min(assignment_attempts, 32) if guided_recycle else assignment_attempts
+    for _assignment_index in range(assignments):
         if cooperative_checkpoint is not None:
             cooperative_checkpoint("assignment_attempt")
-        order = _random_topological_order(blocker_masks, rng)
-        if not order:
-            return None
-        sequence = list(multiset)
-        rng.shuffle(sequence)
-        gate = gates[rng.randrange(len(gates))]
-        if (len(sequence) > 24 and len(labels) >= 5 and required_pre_gate_recycles == 0
+        if guided_recycle or (required_pre_gate_recycles and _assignment_index % 2 == 0):
+            gate = rng.choice(gates)
+            planned = _plan_recycle_assignment(
+                blocker_masks, labels, groups, gate, target, required_pre_gate_recycles,
+                first_recycle_lead_tiles, rng, guided_recycle,
+            )
+            if planned is None:
+                continue
+            order, sequence = planned
+            if min_same_type_layer_span and not _repair_tail_layer_spans(
+                sequence, order, tile_layers, labels, min_same_type_layer_span,
+                target + 3 * required_pre_gate_recycles, fixed_label=gate if guided_recycle else None,
+            ):
+                if assignment_diagnostics is not None:
+                    assignment_diagnostics["same_type_layer_span"] += 1
+                continue
+        else:
+            order = _random_topological_order(blocker_masks, rng)
+            if not order:
+                return None
+            sequence = list(multiset)
+            rng.shuffle(sequence)
+            gate = gates[rng.randrange(len(gates))]
+        if (len(labels) >= 5 and required_pre_gate_recycles == 0
+                and (len(sequence) > 24 or min_same_type_layer_span and 4 <= target <= 7)
                 and _assignment_index % 2 == 0):
             # Construct a valid intended first gate instead of relying on a
             # random shuffle to hit it. Whole-type runs after the gate reduce
@@ -1216,6 +1429,12 @@ def _find_type_assignment(
                 remaining.subtract(prefix)
                 tails = list(dict.fromkeys([gate, *lead, *others]))
                 sequence = prefix + [label for label in tails for _ in range(remaining[label])]
+                if min_same_type_layer_span and not _repair_tail_layer_spans(
+                    sequence, order, tile_layers, labels, min_same_type_layer_span, len(prefix)
+                ):
+                    if assignment_diagnostics is not None:
+                        assignment_diagnostics["same_type_layer_span"] += 1
+                    continue
         assigned = [""] * len(sequence)
         for tile_index, label in zip(order, sequence):
             assigned[tile_index] = label
@@ -1278,7 +1497,10 @@ def _find_type_assignment(
         if assignment_identity in tested_assignments:
             continue
         tested_assignments.add(assignment_identity)
-        if compressed_proof and target > 3 and has_direct_gate_triple(blocker_masks, assigned, gate, below_step=target, required_pre_gate_recycles=required_pre_gate_recycles):
+        if compressed_proof and not guided_recycle and target > 3 and has_direct_gate_triple(
+            blocker_masks, assigned, gate, below_step=target,
+            required_pre_gate_recycles=required_pre_gate_recycles,
+        ):
             if assignment_diagnostics is not None:
                 assignment_diagnostics['assignment_gate_step_mismatch'] += 1
             continue
@@ -1305,6 +1527,8 @@ def _find_type_assignment(
                     required_pre_gate_recycles=required_pre_gate_recycles,
                     first_recycle_lead_tiles=first_recycle_lead_tiles,
                     reject_invalid_target=target,
+                    allow_capacity_witness=True,
+                    recycle_order=order if guided_recycle else None,
                 )
         except (ProofLimitExceeded, CandidateValidationError) as exc:
             if assignment_diagnostics is not None:

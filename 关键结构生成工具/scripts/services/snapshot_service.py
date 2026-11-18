@@ -198,6 +198,7 @@ class SourceSnapshotStore:
         *,
         expected_source_config_hash: str | None = None,
         profile: Profile,
+        template_keys: set[str] | None = None,
     ) -> SourceSnapshotSet:
         if not isinstance(snapshot_set_id, str) or not _SNAPSHOT_ID.fullmatch(
             snapshot_set_id
@@ -286,6 +287,7 @@ class SourceSnapshotStore:
         ):
             raise InputValidationError("源快照源文件列表不合法")
         result: dict[str, LoadedTemplate] = {}
+        seen_keys: set[str] = set()
         total_bytes = 0
         expected_entry_fields = {
             "template_key",
@@ -305,7 +307,7 @@ class SourceSnapshotStore:
             if (
                 not isinstance(template_key, str)
                 or not template_key
-                or template_key in result
+                or template_key in seen_keys
                 or not isinstance(template_id, str)
                 or template_id != template_key
                 or not isinstance(filename, str)
@@ -319,6 +321,9 @@ class SourceSnapshotStore:
                 or size > MAX_SOURCE_BYTES
             ):
                 raise InputValidationError("源快照文件项身份不合法")
+            seen_keys.add(template_key)
+            if template_keys is not None and template_key not in template_keys:
+                continue
             data_path = directory / f"{digest}_m.bytes"
             if data_path.is_symlink():
                 raise InputValidationError("源快照源文件不得为符号链接")

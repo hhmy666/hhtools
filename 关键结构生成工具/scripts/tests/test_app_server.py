@@ -25,6 +25,7 @@ from app import (  # noqa: E402
     AppState,
     ExportRunRecord,
     JobRecord,
+    RequestHandler,
     _duplicate_rejecting_json_object,
     _error_payload,
 )
@@ -41,6 +42,7 @@ from services.job_service import (  # noqa: E402
     GenerationItemResult,
 )
 from services.task_control import CooperativeTaskControl  # noqa: E402
+from services.export_service import export_selected as export_selected_to_disk  # noqa: E402
 from tests.test_ui_service import _chain_source, _generated  # noqa: E402
 
 
@@ -213,6 +215,48 @@ class AppStateTests(unittest.TestCase):
                 })
             self.assertEqual(written["updated_count"], 1)
 
+    def test_calibration_waits_before_using_simplified_simulation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            profile_service = ProfileService(Path(temporary) / "settings.json")
+            profile_service.initialize(Path(temporary) / "tool")
+            state = AppState(profile_service)
+            state.parameter_selections["selection"] = {
+                "manifests": [{"output_template_id": "output"}],
+            }
+            body = {
+                "selection_id": "selection",
+                "history_file": {"name": "history.csv", "data_base64": "eA=="},
+            }
+
+            def simulate(_profile, _manifests, *, confirm_seed_fallback, **_kwargs):
+                confirm_seed_fallback("output", 2, "online_source_geometry_incompatible: 几何不一致")
+                confirm_seed_fallback("output", 3, "online_source_geometry_incompatible: 几何不一致")
+                return {"rows": []}
+
+            def wait_for_status(job_id, status):
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    snapshot = state.consumption_calibration_job(job_id)
+                    if snapshot["status"] == status:
+                        return snapshot
+                    time.sleep(0.005)
+                self.fail(f"Expected {status}, received {snapshot['status']}")
+
+            with patch("app.build_consumption_calibration", side_effect=simulate):
+                for proceed, outcome in ((False, "cancelled"), (True, "completed")):
+                    with self.subTest(proceed=proceed):
+                        job_id = state.create_consumption_calibration_job(body)["job_id"]
+                        try:
+                            pending = wait_for_status(job_id, "awaiting_confirmation")
+                            self.assertIsNone(pending["result"])
+                            self.assertEqual(pending["fallback_confirmation"]["duplicate_index"], 2)
+                            self.assertEqual(state.create_consumption_calibration_job(body)["job_id"], job_id)
+                            state.decide_calibration_fallback(job_id, proceed)
+                            finished = wait_for_status(job_id, outcome)
+                            self.assertEqual(finished["result"] is not None, proceed)
+                        finally:
+                            state.decide_calibration_fallback(job_id, False)
+
     def test_consumption_calibration_runs_in_background_and_reports_progress(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             profile_service = ProfileService(Path(temporary) / "settings.json")
@@ -232,6 +276,7 @@ class AppStateTests(unittest.TestCase):
                 "auto_first_duplicate_max": True,
                 "template_name_prefix": "aipuzzlelessT",
                 "template_name_suffix": "s5",
+                "template_name_overrides": {"output": {"prefix": "pre", "suffix": "s5"}},
             }
             entered = threading.Event()
             release = threading.Event()
@@ -245,6 +290,7 @@ class AppStateTests(unittest.TestCase):
                 self.assertTrue(kwargs["auto_first_duplicate_max"])
                 self.assertEqual(kwargs["template_name_prefix"], "aipuzzlelessT")
                 self.assertEqual(kwargs["template_name_suffix"], "s5")
+                self.assertEqual(kwargs["template_name_overrides"], body["template_name_overrides"])
                 kwargs["progress_callback"]({
                     "phase": "full_simulation",
                     "message": "正在仿真",
@@ -353,11 +399,6 @@ class AppStateTests(unittest.TestCase):
                 original_profile.profile_id,
                 changed_output,
             )
-            regenerated = SimpleNamespace(
-                run_status="completed",
-                items=(),
-                as_dict=lambda: {"summary": {}},
-            )
             exported = SimpleNamespace(
                 as_dict=lambda: {
                     "state": "completed",
@@ -367,8 +408,6 @@ class AppStateTests(unittest.TestCase):
             )
 
             with (
-                patch("app.generate_batch", return_value=regenerated) as generate,
-                patch("app.resolve_export_selections", return_value=()),
                 patch("app.export_selected", return_value=exported) as export,
                 patch.object(
                     state,
@@ -381,7 +420,6 @@ class AppStateTests(unittest.TestCase):
                 state._run_export(record.export_id)
 
         self.assertEqual(record.status, "completed", record.error)
-        self.assertEqual(generate.call_args.args[1], original_profile)
         self.assertEqual(export.call_args.args[0].profile, original_profile)
         self.assertNotEqual(original_profile.output_root, str(changed_output))
 
@@ -2370,12 +2408,92 @@ class AppStateTests(unittest.TestCase):
                                 "template_key": item.template_key,
                                 "resolved_plan_id": item.plan_id,
                                 "candidate_id": candidate_id,
+                                "manual_evidence_override": True,
                             }
                         ]
                     },
                 )
             thread_factory.return_value.start.assert_called_once_with()
             self.assertEqual(export_run.status, "queued")
+
+    def test_export_uses_the_selected_snapshot_while_generation_is_stopping(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            profile_service = ProfileService(Path(temporary) / "settings.json")
+            profile = profile_service.initialize(Path(temporary) / "tool")
+            state = AppState(profile_service)
+            job = self._job_record(state)
+            source = _chain_source()
+            job.sources["ui001"] = source
+            generated = _generated(source)
+            work = job.config.work_items[0]
+            # A live result can contain a candidate in a still-running row,
+            # and may omit other work items that have not been searched yet.
+            job.config = replace(job.config, work_items=(
+                work, replace(work, template_key="waiting"), replace(work, template_key="unselected"),
+            ))
+            unselected = replace(generated, candidate=replace(
+                generated.candidate,
+                candidate_id="candidate_0000000000000000",
+                difficulty_simulation={},
+            ))
+            row = GenerationItemResult(
+                template_key=work.template_key, plan_id=work.plan.plan_id,
+                source_plan_id=work.plan.source_plan_id, plan_signature=work.plan.signature,
+                parameter_source="batch", generation_seed=7, source=source, inspection=None,
+                candidates=(generated, unselected), attempts_completed=1, rejection_counts={},
+                status="running", target_candidate_count=2,
+            )
+            job.result = GenerationBatchResult(
+                format_version=1, batch_seed=job.config.batch.batch_seed,
+                resolved_batch_hash=job.config.batch.config_hash,
+                source_config_hash=job.config.source_config_hash, algorithm_version="test",
+                items=(row, replace(row, template_key="unselected", source=None, candidates=(unselected,))),
+                run_status="running",
+            )
+            job.status = "cancel_requested"
+            job.control.request_cancel()
+            candidate_id = generated.candidate.candidate_id
+            payload = {
+                "idempotency_key": "0f405ca3-8898-4541-a79b-0a5ca7e8a343",
+                "selections": [{"template_key": "ui001", "resolved_plan_id": work.plan.plan_id,
+                                "candidate_id": candidate_id, "manual_evidence_override": True}],
+            }
+            # Simulate an HTTP response lost after enqueue and a later write
+            # failure. Retrying must keep the original candidate and output key.
+            export_attempts = []
+
+            def fail_once(request, **kwargs):
+                export_attempts.append(request)
+                if len(export_attempts) == 1:
+                    raise OSError("test write failure")
+                return export_selected_to_disk(request, **kwargs)
+
+            with (
+                patch("app.generate_batch", side_effect=AssertionError("export must not generate candidates")),
+                patch("app.export_selected", side_effect=fail_once),
+            ):
+                record = state.create_export_run(job.job_id, payload)
+                self.assertIs(state.create_export_run(job.job_id, payload), record)
+                record.worker.join(timeout=8)
+                self.assertEqual(record.status, "failed", record.error)
+                self.assertTrue(record.summary()["actions"]["can_retry"])
+                job.result = replace(job.result, items=())
+                state.control_export(record.export_id, "retry")
+                record.worker.join(timeout=8)
+
+            self.assertEqual(record.status, "completed", record.error)
+            self.assertEqual(len(state.exports), 1)
+            self.assertEqual([request.idempotency_key for request in export_attempts], [payload["idempotency_key"]] * 2)
+            (output,) = record.result["outputs"]
+            self.assertEqual(output["candidate_id"], candidate_id)
+            self.assertTrue((Path(profile.output_root) / output["output_relative_path"]).is_file())
+
+    def test_disconnected_response_is_not_reported_as_bad_request(self) -> None:
+        handler = object.__new__(RequestHandler)
+        with patch.object(handler, "_send_json") as send_json:
+            handler._route_error(BrokenPipeError())
+            send_json.assert_not_called()
+        self.assertTrue(handler.close_connection)
 
     def test_web_seed_round_trips_as_exact_uint64_decimal(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -2683,6 +2801,53 @@ class AppStateTests(unittest.TestCase):
 
 
 class AppServerTests(unittest.TestCase):
+    def test_job_history_and_revision_paged_results_agree_for_large_batch(self) -> None:
+        job = AppStateTests._job_record(self.state)
+        job.status = "completed"
+        job.revision = 4
+        items = [
+            {"template_key": f"ui{index:03}", "candidates": [
+                {"candidate": {"candidate_id": f"{index}-{candidate}"}} for candidate in range(10)
+            ]}
+            for index in range(39)
+        ]
+        job.presentation = {"items": items, "batch_seed": "12345678901234567890"}
+        base = f"{self.base}/api/v1/jobs"
+        with urllib.request.urlopen(base) as response:
+            summary = json.load(response)["jobs"][0]
+        self.assertEqual(summary["status"], "completed")
+        self.assertEqual(summary["result_item_count"], 39)
+        self.assertNotIn("result", summary)
+        recovered = []
+        for start in range(0, 39, 3):
+            with urllib.request.urlopen(f"{base}/{job.job_id}/result?start={start}&revision={summary['revision']}") as response:
+                page = json.load(response)
+            self.assertEqual(page["job_id"], job.job_id)
+            self.assertEqual(page["revision"], summary["revision"])
+            self.assertEqual(page["start"], start)
+            self.assertEqual(page["total_items"], 39)
+            self.assertEqual(page["result"]["batch_seed"], job.presentation["batch_seed"])
+            self.assertLessEqual(len(page["result"]["items"]), 3)
+            recovered.extend(page["result"]["items"])
+        self.assertEqual(recovered, items)
+        job.revision += 1
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(f"{base}/{job.job_id}/result?start=0&revision={summary['revision']}")
+        with caught.exception as response:
+            self.assertEqual(response.code, 409)
+            self.assertEqual(json.load(response)["error"]["code"], "RESULT_REVISION_CHANGED")
+
+    def test_job_detail_keeps_result_and_matching_summary_in_json(self) -> None:
+        job = AppStateTests._job_record(self.state)
+        job.status = "partial"
+        job.presentation = {"items": [{"template_key": "ui001", "candidates": [{"board": {"tiles": []}}]}]}
+        with urllib.request.urlopen(f"{self.base}/api/v1/jobs/{job.job_id}") as response:
+            payload = json.load(response)
+        self.assertEqual(payload["job_id"], job.job_id)
+        self.assertEqual(payload["status"], "partial")
+        self.assertEqual(payload["result"], job.presentation)
+        self.assertIn("resume_items", payload["search"]["budget"])
+
     def test_cancelled_job_source_route_is_read_only_and_scoped(self) -> None:
         job = AppStateTests._job_record(self.state)
         job.sources["ui001"] = _chain_source()
@@ -2760,7 +2925,6 @@ class AppServerTests(unittest.TestCase):
         self.assertNotIn("Number(error?.status) === 404", javascript)
         self.assertIn("updateImportActionState();", javascript)
         self.assertNotIn("const fallbackOrder =", javascript)
-        self.assertIn("const recommended = explicitRank > 0;", javascript)
 
     def test_frontend_asset_route_does_not_expose_non_font_files(self) -> None:
         for path in (

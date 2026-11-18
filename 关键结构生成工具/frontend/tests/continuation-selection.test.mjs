@@ -51,3 +51,29 @@ test("inactive form values do not mark an unchanged template",()=>{
   draft.maxLayerKind="percent";
   assert.match(labelHelpers.label(items[0],draft,baseline),/已修改参数/);
 });
+
+test("a 25-item cached result still shows all unfinished rows from the 39-item task summary", () => {
+  const helpers = Function(`
+    ${slice("  function itemCandidateProgress(", "  function jobSearchBudget(")}
+    ${slice("  function unfinishedJobRows(", "  function createUnfinishedSourceList(")}
+    return { unfinishedJobRows, itemCandidateProgress, jobCanContinueSearch };
+  `)();
+  const cached = Array.from({ length: 25 }, (_, i) => ({
+    template_key: String(i), plan_id: "s6",
+    candidates: Array(i === 24 ? 8 : 10).fill({}), target_candidate_count: 10,
+  }));
+  const resume = Array.from({ length: 15 }, (_, i) => ({
+    template_key: String(i + 24), plan_id: "s6", candidate_target_count: 10,
+    candidate_found_count: i === 0 ? 8 : 0, status: i === 0 ? "partial" : "pending",
+    unfinished_candidate_slots: i === 0 ? 2 : 10,
+  }));
+  const snapshot = { status: "running", work_item_count: 39, search: { budget: { resume_items: resume } } };
+  const unfinished = helpers.unfinishedJobRows(snapshot, cached);
+  assert.equal(unfinished.length, 15);
+  assert.equal(unfinished.filter(item => item.summary_only).length, 14);
+  assert.deepEqual(helpers.itemCandidateProgress(unfinished[0]), { found: 8, target: 10 });
+  assert.equal(helpers.jobCanContinueSearch(snapshot), false);
+  snapshot.status = "partial";
+  snapshot.actions = { can_resume_unfinished: true };
+  assert.equal(helpers.jobCanContinueSearch(snapshot), true);
+});

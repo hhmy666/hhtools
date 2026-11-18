@@ -39,6 +39,7 @@ from services.export_service import (  # noqa: E402
     inconclusive_evidence_record,
 )
 import services.export_service as export_service_module  # noqa: E402
+import puzzle_core.validator as validator_module  # noqa: E402
 from services.job_service import generate_batch  # noqa: E402
 from services.profile_service import Profile  # noqa: E402
 from services.task_control import CooperativeTaskControl  # noqa: E402
@@ -306,11 +307,12 @@ class ExportServiceTests(unittest.TestCase):
                         now=self.NOW,
                     )
 
-    def test_orphan_formal_bytes_requires_reconciliation(self) -> None:
+    def test_unregistered_template_does_not_block_an_unrelated_export(self) -> None:
         orphan = self.output / "aipuzzleorphaneds4_m.bytes"
         orphan.write_bytes(self.source_path.read_bytes())
-        with self.assertRaises(ReconciliationRequiredError):
-            self._export()
+        original = orphan.read_bytes()
+        self.assertEqual(len(self._export().outputs), 1)
+        self.assertEqual(orphan.read_bytes(), original)
 
     @unittest.skipUnless(hasattr(os, "symlink"), "requires symlink support")
     def test_control_directory_symlink_escape_is_rejected(self) -> None:
@@ -401,15 +403,17 @@ class ExportServiceTests(unittest.TestCase):
             "status": "inconclusive", "passed": False,
             "reasons": ["整盘悬置持续上限尚未证明"],
         }
+        selection = replace(self.selection, generated=replace(
+            self.selection.generated,
+            candidate=replace(self.selection.generated.candidate,
+                              difficulty_simulation=difficulty, experience_analysis=experience),
+        ))
         evidence_record = inconclusive_evidence_record(difficulty, experience)
         self.assertTrue(evidence_record["acknowledgement_required"])
-        unconfirmed = replace(self.selection, manual_evidence_override=None)
+        unconfirmed = replace(selection, manual_evidence_override=None)
         with mock.patch.object(
             export_service_module, "validate_candidate",
             return_value=self.selection.generated.validation,
-        ), mock.patch.object(
-            export_service_module, "_recompute_validated_evidence",
-            return_value=(difficulty, experience),
         ), self.assertRaisesRegex(ExportConflictError, "需要在应用内人工确认"):
             export_selected(
                 ExportRequest(
@@ -419,7 +423,7 @@ class ExportServiceTests(unittest.TestCase):
                 ),
                 now=self.NOW,
             )
-        selection = replace(self.selection, manual_evidence_override=evidence_record)
+        selection = replace(selection, manual_evidence_override=evidence_record)
         request = ExportRequest(
             profile=self.profile, selections=(selection,),
             idempotency_key=new_idempotency_key(),
@@ -427,9 +431,6 @@ class ExportServiceTests(unittest.TestCase):
         with mock.patch.object(
             export_service_module, "validate_candidate",
             return_value=self.selection.generated.validation,
-        ), mock.patch.object(
-            export_service_module, "_recompute_validated_evidence",
-            return_value=(difficulty, experience),
         ):
             result = export_selected(request, now=self.NOW)
         manifest = json.loads(
@@ -449,9 +450,6 @@ class ExportServiceTests(unittest.TestCase):
         with mock.patch.object(
             export_service_module, "validate_candidate",
             return_value=self.selection.generated.validation,
-        ), mock.patch.object(
-            export_service_module, "_recompute_validated_evidence",
-            return_value=(difficulty, experience),
         ), self.assertRaisesRegex(ExportConflictError, "证据状态已变化"):
             export_selected(
                 ExportRequest(
@@ -508,6 +506,8 @@ class ExportServiceTests(unittest.TestCase):
             self.selection,
             generated=replace(
                 self.selection.generated,
+                candidate=replace(self.selection.generated.candidate,
+                                  difficulty_simulation=difficulty, experience_analysis=experience),
                 validation=failed_report,
             ),
             manual_evidence_override=evidence_record,
@@ -516,10 +516,6 @@ class ExportServiceTests(unittest.TestCase):
             export_service_module,
             "validate_candidate",
             return_value=failed_report,
-        ), mock.patch.object(
-            export_service_module,
-            "_recompute_validated_evidence",
-            return_value=(difficulty, experience),
         ):
             result = export_selected(
                 ExportRequest(
@@ -556,13 +552,11 @@ class ExportServiceTests(unittest.TestCase):
 
     def test_export_retains_independently_recomputed_dynamic_evidence(self) -> None:
         with mock.patch.object(
-            export_service_module,
-            "simulate_candidate_difficulty",
-            wraps=export_service_module.simulate_candidate_difficulty,
+            validator_module, "simulate_candidate_difficulty",
+            wraps=validator_module.simulate_candidate_difficulty,
         ) as recompute_difficulty, mock.patch.object(
-            export_service_module,
-            "evaluate_candidate_experience",
-            wraps=export_service_module.evaluate_candidate_experience,
+            validator_module, "evaluate_candidate_experience",
+            wraps=validator_module.evaluate_candidate_experience,
         ) as recompute_experience:
             result = self._export()
 
@@ -818,8 +812,10 @@ class ExportServiceTests(unittest.TestCase):
     def test_target_name_preoccupied_without_registry_is_never_claimed(self) -> None:
         target = self.output / "aipuzzlesource001s4_m.bytes"
         target.write_bytes(self.source_path.read_bytes())
-        with self.assertRaises(ReconciliationRequiredError):
-            self._export()
+        original = target.read_bytes()
+        result = self._export()
+        self.assertEqual(result.outputs[0].output_relative_path, "aipuzzlesource001s4v2_m.bytes")
+        self.assertEqual(target.read_bytes(), original)
 
     def test_export_rechecks_that_output_is_not_inside_readonly_source(self) -> None:
         unsafe_profile = Profile(

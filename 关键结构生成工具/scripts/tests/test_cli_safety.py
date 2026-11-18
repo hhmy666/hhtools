@@ -14,7 +14,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import cli  # noqa: E402
-from puzzle_core.config_io import ConfigError  # noqa: E402
+from puzzle_core.config_io import ConfigError, ResolvedBatchConfig  # noqa: E402
 from services.profile_service import Profile  # noqa: E402
 
 
@@ -88,7 +88,9 @@ class CliSafetyTests(unittest.TestCase):
             return _ExportResult()
 
         with (
-            mock.patch.object(cli, "_load_resolved_config", return_value=object()),
+            mock.patch.object(cli, "_load_resolved_config", return_value=ResolvedBatchConfig(
+                batch=None, work_items=(), source_config_hash="test",
+            )),
             mock.patch.object(cli, "ProfileService", return_value=object()),
             mock.patch.object(cli, "_active_profile", return_value=self.profile),
             mock.patch.object(cli, "load_selection_payload", return_value=()),
@@ -112,12 +114,16 @@ class CliSafetyTests(unittest.TestCase):
     def test_export_uses_review_snapshot_seed_and_loaded_sources(self) -> None:
         snapshot = SimpleNamespace(
             snapshot_set_id="snapshot_" + "1" * 32,
-            sources={"hr0029": object()},
+            sources={"hr0029": object(), "unselected": object()},
             batch_seed=987,
             source_config_hash="a" * 64,
             normalized_config_json='{"locked":true}',
         )
-        config = SimpleNamespace(
+        selected = SimpleNamespace(template_key="hr0029", plan=SimpleNamespace(plan_id="s4"))
+        unselected = SimpleNamespace(template_key="unselected", plan=SimpleNamespace(plan_id="s4"))
+        config = ResolvedBatchConfig(
+            batch=None,
+            work_items=(selected, unselected),
             batch_seed_source="override",
             source_config_hash=snapshot.source_config_hash,
             normalized_config_json=snapshot.normalized_config_json,
@@ -140,6 +146,7 @@ class CliSafetyTests(unittest.TestCase):
 
         def generate(_config, _profile, **kwargs):
             captured.update(kwargs)
+            captured["work_items"] = _config.work_items
             return object()
 
         with (
@@ -151,7 +158,9 @@ class CliSafetyTests(unittest.TestCase):
                 "load",
                 return_value=snapshot,
             ),
-            mock.patch.object(cli, "load_selection_payload", return_value=()),
+            mock.patch.object(cli, "load_selection_payload", return_value=(
+                SimpleNamespace(template_key="hr0029", resolved_plan_id="s4"),
+            )),
             mock.patch.object(cli, "generate_batch", side_effect=generate),
             mock.patch.object(cli, "resolve_export_selections", return_value=()),
             mock.patch.object(cli, "export_selected", return_value=_ExportResult()),
@@ -160,7 +169,8 @@ class CliSafetyTests(unittest.TestCase):
             self.assertEqual(cli._command_export(args), 0)
 
         self.assertEqual(captured["seed_override"], snapshot.batch_seed)
-        self.assertEqual(captured["loaded_inputs"], snapshot.sources)
+        self.assertEqual(captured["work_items"], (selected,))
+        self.assertEqual(captured["loaded_inputs"], {"hr0029": snapshot.sources["hr0029"]})
         self.assertEqual(captured["source_snapshot_id"], snapshot.snapshot_set_id)
         self.assertEqual(captured["file_inputs"], {})
 

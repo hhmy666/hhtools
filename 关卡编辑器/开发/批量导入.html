@@ -1,0 +1,18 @@
+<section class="batch-import" data-batch-import hidden aria-labelledby="batch-import-title">
+  <header><h2 id="batch-import-title">导入关卡模板</h2><p>从本地模板仓读取，或一次上传多个模板文件。</p></header>
+  <form class="batch-import-card" data-batch-form novalidate>
+    <div class="batch-import-tabs" role="group" aria-label="模板导入方式">
+      <button type="button" class="secondary-button" data-batch-method="ids" aria-pressed="true">输入模板 ID</button>
+      <button type="button" class="secondary-button" data-batch-method="files" aria-pressed="false">上传模板文件</button>
+    </div>
+    <div data-batch-input="ids"><label for="batch-ids">模板 ID</label><textarea id="batch-ids" rows="6" spellcheck="false" placeholder="每行一个模板 ID，也可以用逗号分隔"></textarea></div>
+    <div data-batch-input="files" hidden>
+      <label class="batch-drop" for="batch-files"><svg aria-hidden="true"><use href="/assets/icons.svg#upload"></use></svg><strong>选择或拖入多个模板文件</strong><span data-batch-file-count>支持 .bytes</span></label>
+      <input id="batch-files" type="file" accept=".bytes" multiple>
+    </div>
+    <button type="submit" class="primary-button" data-batch-submit>读取模板并编辑</button>
+    <button type="button" class="secondary-button" data-batch-resume hidden>继续编辑当前批次</button>
+    <p data-batch-feedback role="status" aria-live="polite"></p>
+    <ul data-batch-errors class="batch-errors"></ul>
+  </form>
+</section>

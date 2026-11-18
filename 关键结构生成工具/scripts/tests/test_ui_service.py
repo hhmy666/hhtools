@@ -29,6 +29,7 @@ from services.ui_service import (  # noqa: E402
     build_candidate_comparison,
     build_solver_traces,
     build_source_board,
+    candidate_review_payload,
 )
 
 
@@ -103,6 +104,30 @@ def _generated(source: LoadedTemplate, seed: int = 2026) -> GeneratedCandidate:
 
 
 class UiServiceTests(unittest.TestCase):
+    def test_candidate_review_preserves_rendered_metrics_and_routes(self) -> None:
+        reveal_curve = {"curve": [{"exposed_count": 4}]}
+        strategy = {"pass_probability": .3, "reveal_curve": reveal_curve}
+        candidate = {
+            "difficulty_simulation": {
+                "source_duplicates": [{"strategies": {"random": strategy}}],
+                "duplicates": [{"strategies": {"random": strategy}, "whole_board_reveal": reveal_curve}],
+            },
+            "experience_analysis": {
+                "experience_signature_evidence": {"graph": []},
+                "reveal_curve": reveal_curve,
+            },
+        }
+        board = {"solver_traces": {"units": [{"routes": []}]}}
+        review = candidate_review_payload({"candidate": candidate, "board": board})
+        result = review["candidate"]
+        self.assertEqual(review["board"], board)
+        self.assertEqual(result["experience_analysis"], {"reveal_curve": reveal_curve})
+        self.assertEqual(result["difficulty_simulation"], {
+            "duplicates": [{"strategies": {"random": {"pass_probability": .3}}}],
+        })
+        self.assertIn("source_duplicates", candidate["difficulty_simulation"])
+        self.assertIn("reveal_curve", strategy)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = _chain_source()

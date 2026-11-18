@@ -40,6 +40,7 @@ from services.consumption_calibration_service import (  # noqa: E402
     _target_record,
     _transition_penalty,
     calibrate_consumption_parameters,
+    match_calibration_templates,
     parse_consumption_history,
 )
 from services.parameter_recommendation_service import DupParam  # noqa: E402
@@ -67,6 +68,142 @@ def _history(rows: list[list[object]], *, header: list[str] | None = None) -> by
 
 
 class ConsumptionCalibrationTests(unittest.TestCase):
+    def test_history_levels_run_separately_and_an_ambiguous_source_does_not_block_batch(self) -> None:
+        level = _level()
+        manifests = [
+            {"source_template_id": f"fixed{name}", "output_template_id": f"aipuzzlefixed{name}s6",
+             "signature": "s6", "source_sha256": level.sha256, "replacements": []}
+            for name in ("ntxkd042", "ntxkd031")
+        ]
+        history = _history([
+            [name, parameter, duplicate, "", "", 100, target, position, level_id]
+            for name, parameter, target, position, level_id in (
+                ("ntxkd042", "7|1|100|4", 439, 439, "list439r3v1ntxkd042"),
+                ("ntxkd042", "8|2|100|4", 545, 545, "list545r3v1ntxkd042"),
+                ("ntxkd031", "all_para", 505, 505, "unlinked505"),
+            )
+            for duplicate in range(1, 11)
+        ], header=[*HEADER, "level_index", "level_id"])
+
+        def config(_profile, selected, **_kwargs):
+            rows = []
+            for manifest in selected:
+                source = manifest["source_template_id"]
+                name = source.removeprefix("fixed")
+                prefix = "fixed" if source.startswith("fixed") else ""
+                configs = (
+                    [("list439r3v1ntxkd042", "7|1|100|4"), ("list545r3v1ntxkd042", "9|3|100|4")]
+                    if name == "ntxkd042" else
+                    [("list505r1v3ntxkd031", "6|1|100|4"), ("list900r1v3ntxkd031", "9|3|100|4")]
+                )
+                for level_id, parameter in configs:
+                    rows.append({"status": "ready", "source_template_id": source,
+                                 "config_source_template_id": source,
+                                 "output_template_id": manifest["output_template_id"],
+                                 "level_ids": [prefix + level_id], "before_dup": [parameter] * 10,
+                                 "recommended_dup": [parameter] * 10})
+            return {"rows": rows}
+
+        kwargs = {"config_set_id": "csv", "history_data": history, "history_filename": "history.csv"}
+        with patch("services.consumption_calibration_service.build_parameter_recommendations", side_effect=config), patch(
+            "services.consumption_calibration_service.load_template_id", return_value=SimpleNamespace(level=level),
+        ):
+            profile = Profile("p", "test", None, None, "/tmp/out", "/tmp/config")
+            result = calibrate_consumption_parameters(profile, manifests, **kwargs)
+            focused = calibrate_consumption_parameters(
+                profile, manifests, **kwargs, focus_output_template_id=manifests[0]["output_template_id"],
+                focus_history_level_id="list545r3v1ntxkd042", first_duplicate_max=8,
+            )
+        self.assertEqual([row["history_level_id"] for row in result["rows"]],
+                         ["list439r3v1ntxkd042", "list545r3v1ntxkd042"])
+        self.assertEqual([row["seed_simulation_level_index"] for row in result["rows"]], [439, 545])
+        self.assertEqual([row["duplicates"][0]["ranking_reference_dup"] for row in result["rows"]],
+                         ["7|1|100|4", "8|2|100|4"])
+        self.assertEqual([row["duplicates"][0]["target_consumption"]["value"] for row in result["rows"]],
+                         [439, 545])
+        self.assertEqual(result["skipped_items"][0]["history_level_id"], "unlinked505")
+        self.assertEqual([row["history_level_id"] for row in focused["rows"]], ["list545r3v1ntxkd042"])
+
+    def test_complete_csv_parameters_supply_baseline_without_a_local_level_row(self) -> None:
+        level = _level()
+        manifest = {"source_template_id": "source", "output_template_id": "output",
+                    "source_sha256": level.sha256, "replacements": []}
+        data = _history([
+            ["source", "7|2|100|4", index, "", "", 100, 500, 504, "level504"]
+            for index in range(1, 11)
+        ], header=[*HEADER, "level_index", "level_id"])
+        with patch("services.consumption_calibration_service.build_parameter_recommendations",
+                   return_value={"rows": []}), patch(
+            "services.consumption_calibration_service.load_template_id", return_value=SimpleNamespace(level=level),
+        ):
+            result = calibrate_consumption_parameters(
+                Profile("p", "test", None, None, "/tmp/out", "/tmp/config"),
+                [manifest], config_set_id="csv", history_data=data, history_filename="history.csv",
+            )
+        row, = result["rows"]
+        self.assertEqual(row["history_level_id"], "level504")
+        self.assertEqual(row["history_parameter_duplicate_indices"], list(range(1, 11)))
+        self.assertEqual([entry["original_dup"] for entry in row["duplicates"]], ["7|2|100|4"] * 10)
+        self.assertFalse(result["skipped_items"])
+
+    def test_all_para_export_matches_templates_and_supplies_targets(self) -> None:
+        data = _history([
+            ["ntxkd042", "all_para", 4, "", "", 300, 800, 420, "level420"],
+            ["ntxkd042", "all_para", 4, "", "", 100, 400, 420, "level420"],
+            ["ntxkd042", "all_para", 5, "", "", 200, 600, 420, "level420"],
+            ["ntxkd038", "not_a_parameter", 4, "", "", 100, 900, 421, "level421"],
+        ], header=[*HEADER, "level_index", "level_id"])
+        manifests = [
+            {"output_template_id": f"aipuzzle{key}s6", "source_template_id": key, "signature": "s6"}
+            for key in ("ntxkd042", "ntxkd038")
+        ]
+        preview = match_calibration_templates(manifests, history_data=data)
+        self.assertEqual(preview["matched_count"], 1)
+        self.assertEqual(preview["items"][0]["matched_template_id"], "ntxkd042")
+
+        rows, warnings = parse_consumption_history(data)
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all(row.parameter is None for row in rows))
+        self.assertTrue(any("未提供具体副本参数" in warning for warning in warnings))
+        target = _target_record(
+            rows, source_template_id="ntxkd042", duplicate_index=4,
+            strategy_group_id="1003", override=None,
+        )
+        self.assertEqual(target["value"], 700)
+        self.assertEqual(target["sample_entrants"], 400)
+        self.assertEqual(_index_association_history(rows), {})
+        self.assertEqual(_observed_seeds(
+            rows, duplicate_index=4, strategy_group_id="1003", original_seed="2",
+        ), ["2"])
+        self.assertEqual(_association_estimate_from_pool(
+            rows, candidate=DupParam(6, "0", "100", 4),
+        )["status"], "unavailable")
+
+    def test_history_without_parameter_column_can_match_and_supply_target(self) -> None:
+        required = ["level_template_id", "level_dup_para_id", "进入人数", "人均消耗"]
+        data = _history([["nthr0059", 2, 8156, 1515.23]], header=required)
+        preview = match_calibration_templates(
+            [{"output_template_id": "aipuzzlenthr0059s6", "source_template_id": "nthr0059", "signature": "s6"}],
+            history_data=data,
+        )
+        self.assertEqual(preview["matched_count"], 1)
+        rows, _ = parse_consumption_history(data)
+        self.assertIsNone(rows[0].parameter)
+        self.assertEqual(rows[0].consumption, 1515.23)
+
+    def test_empty_parameters_do_not_hide_valid_parameter_evidence(self) -> None:
+        data = _history([
+            ["source", "", 4, "", "", 200, 400],
+            ["other", "7|3|100|4", 4, "", "", 100, 800],
+        ])
+        rows, _ = parse_consumption_history(data)
+        self.assertEqual(len(rows), 2)
+        self.assertIsNone(rows[0].parameter)
+        self.assertEqual(_index_association_history(rows)[(4, "")], (rows[1],))
+        self.assertEqual(_observed_seeds(
+            rows, duplicate_index=4, strategy_group_id="1003", original_seed="0",
+        ), ["0", "3"])
+
     def test_explicit_prefix_overrides_manifest_exact_and_other_suffix_matches(self) -> None:
         manifest = {"source_template_id": "lessThr0008", "output_template_id": "aipuzzlelessThr0008s5v2_m.bytes", "signature": "s5"}
         self.assertEqual(_resolve_calibration_template_id(
@@ -108,6 +245,66 @@ class ConsumptionCalibrationTests(unittest.TestCase):
         self.assertEqual(result["matched_count"], 1)
         self.assertEqual(result["items"][0]["matched_template_id"], "hr0008")
         self.assertEqual(manifests[0]["source_template_id"], "lessThr0008")
+
+    def test_batch_affixes_combine_and_require_unique_csv_match(self) -> None:
+        combinations = [
+            ("aipuzzlelessThr0044v2s5", "hr0044"),
+            ("aipuzzlenoTmxd5040v2s5", "mxd5040"),
+            ("aipuzzlenoThr0030s5", "hr0030"),
+            ("aipuzzlelessTxkd091s5", "xkd091"),
+            ("aipuzzlemxd0048s5", "mxd0048"),
+        ]
+        manifests = [
+            {"output_template_id": output, "source_template_id": output, "signature": "s5"}
+            for output, _ in combinations
+        ]
+        rules = {
+            "template_name_prefixes": ["aipuzzlenoT", "aipuzzlelessT"],
+            "template_name_suffixes": ["s5", "v2s5"],
+        }
+        rows = [[key, "7|0|100|4", 1, 1003, "", 100, 500] for _, key in combinations]
+        result = match_calibration_templates(manifests, history_data=_history(rows), **rules)
+        self.assertEqual([item["matched_template_id"] for item in result["items"]],
+                         [key for _, key in combinations])
+        rows.append(["hr0044v2", "7|0|100|4", 1, 1003, "", 100, 500])
+        result = match_calibration_templates(manifests, history_data=_history(rows), **rules)
+        self.assertEqual(result["items"][0]["matches"], ["hr0044", "hr0044v2"])
+        result = match_calibration_templates(
+            manifests, history_data=_history(rows), **rules,
+            template_name_overrides={combinations[0][0]: {"prefix": "aipuzzlelessT", "suffix": "v2s5"}},
+        )
+        self.assertEqual(result["matched_count"], len(combinations))
+        self.assertEqual(result["items"][0]["matched_template_id"], "hr0044")
+
+    def test_per_template_name_overrides_handle_mixed_affixes_without_changing_other_matches(self) -> None:
+        ids = ["aipuzzlelessThr0044v2s5", "aipuzzlenoThr0030s5", "aipuzzlemxd0048s5"]
+        manifests = [
+            {"source_template_id": source, "output_template_id": output, "signature": "s5"}
+            for source, output in zip(("lessThr0044", "noThr0030", "mxd0048"), ids)
+        ]
+        history = _history([
+            [key, "7|0|100|4", 1, 1003, "", 100, 500]
+            for key in ("hr0044", "Thr0044", "hr0030", "Thr0030", "mxd0048")
+        ])
+        before = match_calibration_templates(manifests, history_data=history)
+        self.assertEqual(before["matched_count"], 1)
+        overrides = {
+            ids[0]: {"prefix": "aipuzzlelessT", "suffix": "v2s5"},
+            ids[1]: {"prefix": "aipuzzlenoT", "suffix": "s5"},
+        }
+        result = match_calibration_templates(manifests, history_data=history, template_name_overrides=overrides)
+        self.assertEqual(result["matched_count"], 3)
+        self.assertEqual([item["matched_template_id"] for item in result["items"]], ["hr0044", "hr0030", "mxd0048"])
+        self.assertEqual(result["items"][2], before["items"][2])
+
+        overrides[ids[0]]["suffix"] = "s5"
+        result = match_calibration_templates(manifests, history_data=history, template_name_overrides=overrides)
+        self.assertEqual(result["matched_count"], 2)
+        self.assertIn("hr0044v2", result["items"][0]["message"])
+        with self.assertRaisesRegex(InputValidationError, "本次选择"):
+            match_calibration_templates(manifests, history_data=history, template_name_overrides={
+                "other": {"prefix": "aipuzzle", "suffix": "s5"},
+            })
 
     def test_calibration_template_names_resolve_complete_unique_history_ids(self) -> None:
         manifest = {
@@ -181,8 +378,10 @@ class ConsumptionCalibrationTests(unittest.TestCase):
             result = calibrate_consumption_parameters(
                 Profile("p", "test", None, None, "/tmp/out", "/tmp/config"),
                 [manifest], config_set_id="csv", history_data=history,
-                history_filename="history.csv", template_name_prefix="aipuzzlelessT",
-                template_name_suffix="s5",
+                history_filename="history.csv", template_name_prefix="incompatible-global-prefix",
+                template_name_overrides={
+                    manifest["output_template_id"]: {"prefix": "aipuzzlelessT", "suffix": "s5v2"},
+                },
             )
         (row,) = result["rows"]
         self.assertEqual(passed_manifests[0]["source_template_id"], "hr0010")
@@ -190,6 +389,7 @@ class ConsumptionCalibrationTests(unittest.TestCase):
         self.assertEqual(row["source_template_id"], "lessThr0010")
         self.assertEqual(row["config_source_template_id"], "hr0010")
         self.assertEqual(row["canonical_template_id"], "hr0010")
+        self.assertEqual(row["template_name_match"]["method"], "per_template_name_exact")
         self.assertEqual(row["seed_simulation_level_index"], 330)
         self.assertEqual(row["duplicates"][0]["target_consumption"]["value"], 500.0)
         self.assertEqual(row["source_fingerprints"]["source_template_sha256"], level.sha256)
@@ -198,7 +398,7 @@ class ConsumptionCalibrationTests(unittest.TestCase):
     def test_processed_config_caps_search_but_preserves_online_consumption_target(self) -> None:
         level = _level()
         manifest = {"source_template_id":"lessTmxd0003", "output_template_id":"aipuzzlelessTmxd0003s5", "source_sha256":level.sha256, "source_tile_counts":{"A":12,"B":0}, "signature":"s5", "replacements":[]}
-        history = _history([["mxd0003","8|0|100|4",i,1003,"",100,500,330] for i in range(1,11)], header=[*HEADER,"level_index"])
+        history = _history([["mxd0003","all_para",i,1003,"",100,500,330] for i in range(1,11)], header=[*HEADER,"level_index"])
         def baseline(_profile, manifests, **_kwargs):
             processed = manifests[0]["source_template_id"] == "lessTmxd0003"
             return {"rows":[{"status":"ready", "source_template_id":manifests[0]["source_template_id"], "config_source_template_id":manifests[0]["source_template_id"], "output_template_id":manifest["output_template_id"], "level_ids":[], "online_positions":[330], "before_dup":["5|0|100|4" if processed else "8|0|100|4"]*10, "recommended_dup":["4|0|100|4" if processed else "7|0|100|4"]*10, "strategy_group_id":"1003", "random_seed_group_id":0}], "warnings":[], "source_tables":{}}
@@ -1013,7 +1213,7 @@ class ConsumptionCalibrationTests(unittest.TestCase):
                 history_rows.extend(
                     [
                         ["online-source", "7|0|100|4", duplicate, 1003, "s1", 1200, 500 - duplicate, 200, "newv1source"],
-                        ["online-source", "9|0|100|5", duplicate, 1003, "s1", 900, 900 - duplicate, 205, "random-40"],
+                        ["other-online-source", "9|0|100|5", duplicate, 1003, "s1", 900, 900 - duplicate, 205, "random-40"],
                         ["neighbour", "5|0|100|4", duplicate, 1003, "s1", 900, 470 - duplicate, 230, "neighbour-level"],
                         ["neighbour2", "6|0|100|4", duplicate, 1003, "s1", 800, 485 - duplicate, 240, "neighbour2-level"],
                         ["seed-test", "5|2|100|4", duplicate, 1003, "s1", 700, 468 - duplicate, 250, "seed-test-level"],
@@ -1239,12 +1439,9 @@ class ConsumptionCalibrationTests(unittest.TestCase):
                 ["csv/config_level_strategy_group.csv"],
             )
             (row,) = result["rows"]
-            self.assertTrue(
-                any("history_level_id" in warning for warning in result["warnings"])
-            )
             self.assertEqual(
                 row["baseline_resolution"]["status"],
-                "ambiguous_deterministic",
+                "unique",
             )
             self.assertEqual(
                 row["baseline_resolution"]["target_history_scope"],
@@ -1317,7 +1514,7 @@ class ConsumptionCalibrationTests(unittest.TestCase):
                 )
                 self.assertTrue(duplicate["recommendation"]["is_best_fit"])
                 self.assertFalse(duplicate["recommendation"]["is_recommended"])
-                self.assertIn(
+                self.assertNotIn(
                     "baseline_config_resolution_ambiguous",
                     duplicate["recommendation"]["simulation_evidence_reasons"],
                 )
@@ -1423,7 +1620,7 @@ class ConsumptionCalibrationTests(unittest.TestCase):
             self.assertTrue(
                 all(
                     0 <= item["candidate_completed"] <= item["candidate_total"]
-                    and item["current_template"] == "output"
+                    and item["current_template"] == "output · newv1source"
                     for item in full_simulation_progress
                 )
             )

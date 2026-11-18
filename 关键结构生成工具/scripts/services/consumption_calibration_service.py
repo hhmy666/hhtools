@@ -5,6 +5,8 @@ The service intentionally separates three evidence layers:
 * source-template online aggregates supply the primary per-duplicate anchor;
 * a versioned, bounded s5 empirical structure correction can be
   explicitly labeled as an unvalidated transfer estimate outside that band;
+* paired player rollouts estimate consumption for the selected draft when
+  both boards and the corresponding online consumption can be reproduced;
 * same-duplicate/same-strategy-group neighbours remain contextual evidence,
   never the primary forecast or a causal Seed effect;
 * the deterministic whole-board simulator uses current local legacy-Seed
@@ -42,7 +44,7 @@ from puzzle_core.legacy_materialization import (
     parse_level_tile_config,
 )
 from puzzle_core.structure_strategy import replay_structure_strategy
-from puzzle_core.solver import SolverLimits, analyze_puzzle
+from puzzle_core.solver import STRUCTURE_TYPES, SolverLimits, analyze_puzzle
 from puzzle_core.search import STRUCTURE_ID_TO_TYPE
 
 from .import_service import load_template_id
@@ -52,9 +54,11 @@ from .parameter_recommendation_service import (
     discover_config_sets,
     manifest_replacement_type_counts,
     parse_dup_param,
+    recommend_dup_params,
     source_tile_counts,
 )
 from .path_service import is_within
+from .player_consumption_estimate import load_player_consumption_estimator
 from .profile_service import Profile
 
 
@@ -95,12 +99,12 @@ STATIC_STRUCTURE_FEATURE_NAMES = frozenset(
 )
 REQUIRED_HISTORY_COLUMNS = (
     "level_template_id",
-    "level_dup",
     "level_dup_para_id",
     "进入人数",
     "人均消耗",
 )
 OPTIONAL_HISTORY_COLUMNS = (
+    "level_dup",
     "strategy_group_id",
     "strategy_effective_list",
 )
@@ -946,7 +950,7 @@ def _materialization_failure_reason(
 class HistoryRow:
     template_id: str
     duplicate_index: int
-    parameter: DupParam
+    parameter: DupParam | None
     strategy_group_id: str
     effective_strategies: tuple[str, ...]
     entrants: float
@@ -1047,7 +1051,10 @@ def _parse_consumption_history_with_coverage(
             duplicate_index = int(str(raw["level_dup_para_id"]).strip())
             if not 1 <= duplicate_index <= 10:
                 raise ValueError
-            parameter = parse_dup_param(str(raw["level_dup"]).strip())
+            raw_parameter = str(raw.get("level_dup") or "").strip()
+            parameter = (
+                None if raw_parameter in {"", "all_para"} else parse_dup_param(raw_parameter)
+            )
             entrants = _number(raw["进入人数"], field="进入人数", row_number=offset)
             consumption = _number(
                 raw["人均消耗"], field="人均消耗", row_number=offset
@@ -1081,10 +1088,17 @@ def _parse_consumption_history_with_coverage(
         raise InputValidationError("历史副本数据没有可用行")
     if skipped:
         warnings.append(f"已跳过 {skipped} 行副本编号、参数或指标无效的数据。")
+    missing_parameter_count = sum(row.parameter is None for row in rows)
+    if missing_parameter_count:
+        warnings.append(
+            f"{missing_parameter_count} 行历史数据未提供具体副本参数，"
+            "按副本读取线上消耗目标。原副本仿真参数来自 config_level。"
+        )
     return rows, warnings, {
         "sha256": hashlib.sha256(data).hexdigest(),
         "parsed_row_count": len(rows),
         "ignored_row_count": skipped,
+        "rows_without_parameters": missing_parameter_count,
         "covered_duplicate_indices": sorted(
             {row.duplicate_index for row in rows}
         ),
@@ -1166,23 +1180,20 @@ def _association_estimate_from_pool(
     history once instead of filtering the complete CSV for every candidate.
     """
 
-    ranked = sorted(
-        pool,
-        key=lambda row: (
-            abs(row.parameter.a - candidate.a)
-            + abs(row.parameter.b - candidate.b)
-            + (0.35 if row.parameter.seed != candidate.seed else 0.0),
-            -row.entrants,
-            row.template_id,
-        ),
-    )[:neighbour_limit]
-    weighted: list[tuple[HistoryRow, float]] = []
-    for row in ranked:
+    distances: list[tuple[float, HistoryRow]] = []
+    for row in pool:
+        parameter = row.parameter
+        if parameter is None:
+            continue
         distance = (
-            abs(row.parameter.a - candidate.a)
-            + abs(row.parameter.b - candidate.b)
-            + (0.35 if row.parameter.seed != candidate.seed else 0.0)
+            abs(parameter.a - candidate.a)
+            + abs(parameter.b - candidate.b)
+            + (0.35 if parameter.seed != candidate.seed else 0.0)
         )
+        distances.append((distance, row))
+    distances.sort(key=lambda entry: (entry[0], -entry[1].entrants, entry[1].template_id))
+    weighted: list[tuple[HistoryRow, float]] = []
+    for distance, row in distances[:neighbour_limit]:
         # Square-root entrants prevents one large aggregate from erasing the
         # cross-template spread while still rewarding stronger observations.
         weight = math.sqrt(row.entrants) / (1.0 + distance)
@@ -1226,6 +1237,8 @@ def _index_association_history(
 ) -> dict[tuple[int, str], tuple[HistoryRow, ...]]:
     buckets: dict[tuple[int, str], list[HistoryRow]] = {}
     for row in history:
+        if row.parameter is None:
+            continue
         buckets.setdefault(
             (row.duplicate_index, row.strategy_group_id), []
         ).append(row)
@@ -1331,24 +1344,26 @@ def _observed_seeds(
 ) -> list[str]:
     entrants_by_seed: dict[str, float] = {}
     for row in history:
+        parameter = row.parameter
         if (
-            row.duplicate_index == duplicate_index
+            parameter is not None
+            and row.duplicate_index == duplicate_index
             and _strategy_matches(row.strategy_group_id, strategy_group_id)
         ):
             # Experimental Seed search is deliberately restricted to observed,
             # production-shaped integer values.  The original Seed is still
             # retained below even when an old configuration used a non-integer
             # token; preserving the baseline is safer than rewriting it.
-            if not re.fullmatch(r"[0-9]+", row.parameter.seed):
+            if not re.fullmatch(r"[0-9]+", parameter.seed):
                 continue
             try:
-                parsed_seed = int(row.parameter.seed)
+                parsed_seed = int(parameter.seed)
             except ValueError:
                 continue
             if not 0 <= parsed_seed <= 2_147_483_647:
                 continue
-            entrants_by_seed[row.parameter.seed] = (
-                entrants_by_seed.get(row.parameter.seed, 0.0) + row.entrants
+            entrants_by_seed[parameter.seed] = (
+                entrants_by_seed.get(parameter.seed, 0.0) + row.entrants
             )
     ordered = sorted(
         entrants_by_seed,
@@ -1462,7 +1477,7 @@ def _select_one_baseline_per_output(
                 duplicate_index: {
                     item.parameter.render()
                     for item in scoped_history
-                    if item.duplicate_index == duplicate_index
+                    if item.duplicate_index == duplicate_index and item.parameter is not None
                 }
                 for duplicate_index in range(1, 11)
             }
@@ -1538,12 +1553,52 @@ def _select_one_baseline_per_output(
     return selected, warnings
 
 
+def _validate_template_name_affix(value: Any) -> str:
+    if not isinstance(value, str) or len(value) > 128 or any(
+        character in value for character in ("/", "\\", "\n", "\r", "\0")
+    ):
+        raise InputValidationError("模板名前后缀不能超过 128 个字，也不能包含路径或换行")
+    return value
+
+
+def _normalize_batch_affixes(values: Any) -> tuple[str, ...]:
+    if values is None:
+        return ()
+    if not isinstance(values, list) or len(values) > 24:
+        raise InputValidationError("批量前缀和后缀各最多可选 24 项")
+    return tuple(dict.fromkeys(filter(None, (
+        _validate_template_name_affix(value).strip() for value in values
+    ))))
+
+
+def _template_name_overrides(
+    manifests: Sequence[Mapping[str, Any]], raw: Any,
+) -> dict[str, tuple[str, str]]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise InputValidationError("逐模板前后缀必须按模板 ID 提供")
+    selected_ids = {str(manifest.get("output_template_id", "")) for manifest in manifests}
+    overrides = {}
+    for output_id, value in raw.items():
+        if output_id not in selected_ids or not isinstance(value, Mapping) or set(value) != {"prefix", "suffix"}:
+            raise InputValidationError("逐模板前后缀必须对应本次选择的模板，并包含前缀和后缀")
+        overrides[output_id] = (
+            _validate_template_name_affix(value["prefix"]),
+            _validate_template_name_affix(value["suffix"]),
+        )
+    return overrides
+
+
 def _resolve_calibration_template_id(
     manifest: Mapping[str, Any],
     available_template_ids: Sequence[str] | set[str],
     *,
     prefix: str = "",
     suffix: str = "",
+    name_override: tuple[str, str] | None = None,
+    prefixes: tuple[str, ...] = (),
+    suffixes: tuple[str, ...] = (),
 ) -> tuple[str | None, dict[str, Any]]:
     """Match complete history IDs while retaining the manifest's source identity."""
 
@@ -1561,11 +1616,61 @@ def _resolve_calibration_template_id(
         "method": "unmatched",
         "matched_template_id": None,
     }
+    if name_override is not None:
+        prefix, suffix = name_override
+        if not output_name.startswith(prefix) or not output_name.endswith(suffix):
+            raise InputValidationError("所选前缀或后缀与模板名不一致")
+        end = len(output_name) - len(suffix)
+        if len(prefix) >= end:
+            raise InputValidationError("前后缀之间至少要保留一个字符")
+        custom_id = output_name[len(prefix):end]
+        if custom_id not in available:
+            raise InputValidationError(f"CSV 中没有模板 {custom_id}，请检查所选前后缀或上传对应数据")
+        return custom_id, {
+            **evidence, "prefix": prefix, "suffix": suffix, "status": "matched",
+            "method": "per_template_name_exact", "matched_template_id": custom_id,
+        }
+
     signature = str(manifest.get("signature") or "").strip()
     generated_suffix = suffix or (
         signature if re.fullmatch(r"s[4-9]|tower", signature)
         else ""
     )
+
+    if prefixes or suffixes:
+        matches: dict[str, tuple[str, str]] = {}
+        default_prefix = "aipuzzle" if output_name.startswith("aipuzzle") else ""
+        for batch_prefix in prefixes or (default_prefix,):
+            if not output_name.startswith(batch_prefix):
+                continue
+            for batch_suffix in suffixes or (generated_suffix,):
+                end = len(output_name)
+                if batch_suffix:
+                    if not output_name.endswith(batch_suffix):
+                        versioned = re.search(
+                            rf"{re.escape(batch_suffix)}v[0-9]+$", output_name
+                        )
+                        if versioned is None:
+                            continue
+                        end = versioned.start()
+                    else:
+                        end -= len(batch_suffix)
+                candidate_id = output_name[len(batch_prefix):end]
+                if candidate_id and candidate_id in available:
+                    matches.setdefault(candidate_id, (batch_prefix, batch_suffix))
+        if len(matches) > 1:
+            candidates = sorted(matches)
+            raise InputValidationError(
+                f"批量前后缀组合命中多个 CSV 模板：{'、'.join(candidates)}；请单独设置前后缀",
+                evidence={"output_template_id": output_id, "matches": candidates},
+            )
+        if matches:
+            candidate_id, (batch_prefix, batch_suffix) = next(iter(matches.items()))
+            return candidate_id, {
+                **evidence, "prefix": batch_prefix, "suffix": batch_suffix,
+                "status": "matched", "method": "batch_name_exact",
+                "matched_template_id": candidate_id,
+            }
 
     def strip_generated_suffix(name: str) -> str | None:
         if generated_suffix:
@@ -1637,11 +1742,16 @@ def match_calibration_templates(
     history_data: bytes,
     template_name_prefix: str = "",
     template_name_suffix: str = "",
+    template_name_prefixes: list[str] | None = None,
+    template_name_suffixes: list[str] | None = None,
+    template_name_overrides: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Preview the same CSV matches used by calibration, without simulation."""
-    for value in (template_name_prefix, template_name_suffix):
-        if not isinstance(value, str) or len(value) > 128 or any(c in value for c in ("/", "\\", "\n", "\r", "\0")):
-            raise InputValidationError("模板名前后缀不能超过 128 个字，也不能包含路径或换行")
+    template_name_prefix = _validate_template_name_affix(template_name_prefix).strip()
+    template_name_suffix = _validate_template_name_affix(template_name_suffix).strip()
+    prefixes = _normalize_batch_affixes(template_name_prefixes)
+    suffixes = _normalize_batch_affixes(template_name_suffixes)
+    name_overrides = _template_name_overrides(manifests, template_name_overrides)
     history, _warnings = parse_consumption_history(history_data)
     available = {row.template_id for row in history}
     items = []
@@ -1649,7 +1759,9 @@ def match_calibration_templates(
         item = {"output_template_id": manifest.get("output_template_id"), "source_template_id": manifest.get("source_template_id")}
         try:
             matched, evidence = _resolve_calibration_template_id(
-                manifest, available, prefix=template_name_prefix.strip(), suffix=template_name_suffix.strip(),
+                manifest, available, prefix=template_name_prefix, suffix=template_name_suffix,
+                prefixes=prefixes, suffixes=suffixes,
+                name_override=name_overrides.get(str(item["output_template_id"])),
             )
             item.update(evidence)
             if matched is None:
@@ -1724,6 +1836,69 @@ def _resolve_target_history(
     return resolved_rows, resolved_id, "resolved_source_alias_fallback"
 
 
+def _history_dup_parameters(history: Sequence[HistoryRow]) -> dict[int, DupParam]:
+    parameters: dict[int, DupParam] = {}
+    for row in history:
+        if row.parameter is None:
+            continue
+        previous = parameters.setdefault(row.duplicate_index, row.parameter)
+        if previous != row.parameter:
+            raise InputValidationError(
+                f"CSV 同一关卡的副本 {row.duplicate_index} 有多套参数，无法唯一确定本次仿真的参数和消耗目标"
+            )
+    return parameters
+
+
+def _processed_config_for_history(
+    choices: Sequence[Mapping[str, Any]],
+    history_level_id: str,
+    parameters: Mapping[int, DupParam],
+    *,
+    fixed_alias: bool,
+) -> Mapping[str, Any] | None:
+    if not choices:
+        return None
+    candidates = list(choices)
+    if history_level_id:
+        expected_ids = [history_level_id]
+        if fixed_alias:
+            expected_ids.append(f"fixed{history_level_id}")
+        for level_id in expected_ids:
+            exact = [row for row in candidates if level_id in row.get("level_ids", ())]
+            if exact:
+                candidates = exact
+                break
+    if parameters:
+        matching = [
+            row for row in candidates
+            if len(row["before_dup"]) == 10 and all(
+                row["before_dup"][index - 1] == parameter.render()
+                for index, parameter in parameters.items()
+            )
+        ]
+        if matching:
+            candidates = matching
+    if len({tuple(row["before_dup"]) for row in candidates}) == 1:
+        return candidates[0]
+    return None
+
+
+def _fidelity_for_csv_parameters(
+    parameters: Sequence[DupParam],
+    baseline_row: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> list[DupParam]:
+    replaced_a, replaced_b = manifest_replacement_type_counts(manifest)
+    return [
+        parse_dup_param(value) for value in recommend_dup_params(
+            parameters, "fidelity", replaced_a_type_count=replaced_a,
+            replaced_b_type_count=replaced_b,
+            minimum_a=baseline_row.get("minimum_a_types", 0),
+            minimum_b=baseline_row.get("minimum_b_types", 0),
+        )
+    ]
+
+
 def _candidate_space(
     original: DupParam,
     baseline: DupParam,
@@ -1765,7 +1940,14 @@ def _candidate_space(
     return candidates
 
 
-def _automatic_structure_search_bounds(originals, baselines, replaced_a_types, replaced_b_types):
+def _automatic_structure_search_bounds(
+    originals: Sequence[DupParam],
+    baselines: Sequence[DupParam],
+    replaced_a_types: int,
+    replaced_b_types: int,
+    *,
+    specified_count: int | None = None,
+) -> tuple[list[DupParam], list[DupParam], dict[str, Any] | None]:
     """Compute caps from distinct replacement types before any simulation.
 
     The mechanical fidelity value stays a displayed reference. It is not a
@@ -1778,21 +1960,33 @@ def _automatic_structure_search_bounds(originals, baselines, replaced_a_types, r
     if not (replaced_a_types or replaced_b_types):
         return upper, lower, None
     first = originals[0]
-    a_cap, b_cap = first.a - replaced_a_types, first.b - replaced_b_types
-    if a_cap < 0 or b_cap < 0:
-        raise InputValidationError("首副本原参数不足以扣减实际替换的结构块种类数")
+    a_deduction, b_deduction = replaced_a_types, replaced_b_types
+    if specified_count is not None:
+        a_deduction = specified_count if replaced_a_types else 0
+        b_deduction = specified_count if replaced_b_types else 0
+    if a_deduction and first.a < 4:
+        raise InputValidationError(f"首副本原 A 种类数为 {first.a}，低于扣减下限 4")
+    if b_deduction and first.b < 3:
+        raise InputValidationError(f"首副本原 B 种类数为 {first.b}，低于扣减下限 3")
+    a_cap = max(4, first.a - a_deduction) if a_deduction else first.a
+    b_cap = max(3, first.b - b_deduction) if b_deduction else first.b
     upper[0] = DupParam(a_cap, first.seed, first.luck, b_cap)
-    for index, (ceiling, base) in enumerate(zip(upper, baselines)):
+    lower[0] = DupParam(4 if a_deduction else first.a, first.seed, first.luck,
+                        3 if b_deduction else first.b)
+    for index, (ceiling, base) in enumerate(zip(upper[1:], baselines[1:]), start=1):
         lower[index] = DupParam(
-            min(base.a, ceiling.a, 4) if replaced_a_types else base.a,
+            min(base.a, ceiling.a, 4) if a_deduction else base.a,
             base.seed, base.luck,
-            min(base.b, ceiling.b, 3) if replaced_b_types else base.b,
+            min(base.b, ceiling.b, 3) if b_deduction else base.b,
         )
     return upper, lower, {
-        "mode": "automatic_structure_types",
+        "mode": "specified_structure_types" if specified_count is not None else "automatic_structure_types",
         "source_a": first.a, "source_b": first.b,
         "replaced_a_type_count": replaced_a_types,
         "replaced_b_type_count": replaced_b_types,
+        "a_deduction_count": a_deduction,
+        "b_deduction_count": b_deduction,
+        "specified_count": specified_count,
         "a_max": a_cap, "b_max": b_cap,
     }
 
@@ -2020,6 +2214,7 @@ def _legacy_seed_config_context(
         level_tile_text = level_tile_path.read_text(encoding="utf-8-sig")
         client_tile_text = client_tile_path.read_text(encoding="utf-8-sig")
         return {
+            "config_directory": directory,
             "level_tile_rows": parse_level_tile_config(level_tile_text),
             "tile_catalog": parse_client_tile_config(client_tile_text),
             "source_paths": [
@@ -2422,6 +2617,10 @@ def _serialize_candidate(
         recommendation_status = "best_fit_insufficient_evidence"
         recommendation_label = "缺少历史目标" if target_value is None else "无法估算"
         is_recommended = False
+    elif prediction.get("estimate_mode") == "player_rollout":
+        recommendation_status = "best_fit_directional"
+        recommendation_label = "玩家仿真 · 需复核"
+        is_recommended = False
     elif not correction_applied:
         recommendation_status = "best_fit_directional"
         recommendation_label = "仅供参考"
@@ -2532,14 +2731,20 @@ def calibrate_consumption_parameters(
     config_level_data: bytes | None = None,
     config_level_filename: str | None = None,
     focus_output_template_id: str | None = None,
+    focus_history_level_id: str | None = None,
     first_duplicate_max: int | None = None,
     auto_first_duplicate_max: bool = False,
+    first_duplicate_structure_deduction_count: int | None = None,
     simulate_first_duplicate_seeds: bool = False,
     consider_structure_strategy: bool = True,
     optimize_all_duplicate_seeds: bool = False,
     template_name_prefix: str = "",
     template_name_suffix: str = "",
+    template_name_prefixes: list[str] | None = None,
+    template_name_suffixes: list[str] | None = None,
+    template_name_overrides: Mapping[str, Any] | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    confirm_seed_fallback: Callable[[str, int, str], None] | None = None,
 ) -> dict[str, Any]:
     """Return reviewable DupPara1–10 paths without mutating configuration."""
 
@@ -2555,14 +2760,23 @@ def calibrate_consumption_parameters(
         raise InputValidationError("optimize_all_duplicate_seeds 必须是布尔值")
     if not isinstance(auto_first_duplicate_max, bool):
         raise InputValidationError("auto_first_duplicate_max 必须是布尔值")
-    for value in (template_name_prefix, template_name_suffix):
-        if not isinstance(value, str) or len(value) > 128 or any(
-            character in value for character in ("/", "\\", "\n", "\r", "\0")
-        ):
-            raise InputValidationError("模板名称前缀和后缀必须是合法的短文本")
-    template_name_prefix = template_name_prefix.strip()
-    template_name_suffix = template_name_suffix.strip()
+    specified_deduction = first_duplicate_structure_deduction_count
+    if specified_deduction is not None:
+        if (type(specified_deduction) is not int
+                or not 1 <= specified_deduction <= len(STRUCTURE_TYPES)):
+            raise InputValidationError(f"指定扣减种类数必须是 1–{len(STRUCTURE_TYPES)} 的整数")
+        if auto_first_duplicate_max:
+            raise InputValidationError("首副本上限的两种扣减方式只能选择一种")
+    use_structure_cap = auto_first_duplicate_max or specified_deduction is not None
+    template_name_prefix = _validate_template_name_affix(template_name_prefix).strip()
+    template_name_suffix = _validate_template_name_affix(template_name_suffix).strip()
+    prefixes = _normalize_batch_affixes(template_name_prefixes)
+    suffixes = _normalize_batch_affixes(template_name_suffixes)
+    name_overrides = _template_name_overrides(manifests, template_name_overrides)
     focus_output_id = str(focus_output_template_id or "").strip()
+    focus_level_id = str(focus_history_level_id or "").strip()
+    if focus_level_id and not focus_output_id:
+        raise InputValidationError("按关卡重算时必须同时指定新模板 ID")
     if focus_output_id:
         if isinstance(first_duplicate_max, bool):
             raise InputValidationError("首副本最高参数必须是整数")
@@ -2634,6 +2848,8 @@ def calibrate_consumption_parameters(
         profile, config_set_id
     )
     structure_correction_model = _load_structure_correction_model()
+    player_estimator = None
+    player_estimator_attempted = False
 
     parsed_overrides: dict[int, float] = {}
     if target_overrides is not None:
@@ -2662,6 +2878,8 @@ def calibrate_consumption_parameters(
         canonical_id, match_evidence = _resolve_calibration_template_id(
             manifest, history_template_ids,
             prefix=template_name_prefix, suffix=template_name_suffix,
+            prefixes=prefixes, suffixes=suffixes,
+            name_override=name_overrides.get(output_id),
         )
         canonical_matches[output_id] = canonical_id, match_evidence
         calibrated = dict(manifest)
@@ -2718,7 +2936,7 @@ def calibrate_consumption_parameters(
             if str(row.get("output_template_id", "")) in fallback_outputs
         ]
         baseline.setdefault("warnings", []).extend(fallback_baseline.get("warnings", []))
-    processed_comparisons: dict[str, dict[str, Any]] = {}
+    processed_configs: dict[str, list[Mapping[str, Any]]] = {}
     alias_manifests = [item for item in manifests if canonical_matches[str(item.get("output_template_id", ""))][0] not in {None, item.get("source_template_id")}]
     if alias_manifests:
         processed_result = build_parameter_recommendations(
@@ -2727,17 +2945,12 @@ def calibrate_consumption_parameters(
             config_level_data=config_level_data, config_level_filename=config_level_filename,
             filter_by_level_range=False,
         )
-        for manifest in alias_manifests:
-            output_id = str(manifest.get("output_template_id", ""))
-            source_id = str(manifest.get("source_template_id", ""))
-            # Only an exact config row for the processed source establishes
-            # this extra bound; a clean-name alias is not a second config.
-            choices = [row for row in processed_result.get("rows", []) if row.get("output_template_id") == output_id and row.get("status") == "ready" and row.get("config_source_template_id") == source_id]
-            distinct = {tuple(row.get("before_dup", [])) for row in choices}
-            if len(distinct) > 1:
-                raise InputValidationError(f"{source_id} 在 config_level 中有多套不同副本参数，无法确定搜索上限；请先确认该模板应使用哪套配置")
-            if choices:
-                processed_comparisons[output_id] = choices[0]
+        for row in processed_result.get("rows", []):
+            output_id = str(row.get("output_template_id", ""))
+            manifest = manifest_by_output.get(output_id)
+            if (manifest is not None and row.get("status") == "ready"
+                    and row.get("config_source_template_id") == manifest.get("source_template_id")):
+                processed_configs.setdefault(output_id, []).append(row)
     for row in baseline.get("rows", []):
         output_id = str(row.get("output_template_id", ""))
         manifest = manifest_by_output.get(output_id)
@@ -2748,19 +2961,94 @@ def calibrate_consumption_parameters(
                 row["config_source_match"] = "canonical_history_alias"
     result_rows: list[dict[str, Any]] = []
     warnings = list(parse_warnings) + list(baseline.get("warnings", []))
-    baseline_rows, baseline_selection_warnings = _select_one_baseline_per_output(
-        baseline.get("rows", []), history
-    )
-    if focus_output_id:
-        baseline_rows = [
-            row for row in baseline_rows
-            if str(row.get("output_template_id", "")) == focus_output_id
-        ]
+    skipped_items: list[dict[str, str]] = []
+
+    def skip_item(output_id: str, history_level_id: str, reason: str) -> None:
+        if focus_output_id:
+            raise InputValidationError(reason)
+        skipped_items.append({
+            "output_template_id": output_id,
+            "history_level_id": history_level_id,
+            "reason": reason,
+        })
+
+    history_by_template: dict[str, list[HistoryRow]] = {}
+    for row in history:
+        history_by_template.setdefault(row.template_id, []).append(row)
+    config_by_output: dict[str, list[Mapping[str, Any]]] = {}
+    for row in baseline.get("rows", []):
+        config_by_output.setdefault(str(row.get("output_template_id", "")), []).append(row)
+
+    baseline_rows: list[dict[str, Any]] = []
+    for output_id, manifest in manifest_by_output.items():
+        if focus_output_id and output_id != focus_output_id:
+            continue
+        source_id = str(manifest.get("source_template_id", ""))
+        canonical_id = canonical_matches[output_id][0]
+        configs = config_by_output.get(output_id, [])
+        config_source_id = str(configs[0].get("config_source_template_id") or source_id) if configs else source_id
+        aliases = dict.fromkeys((source_id, config_source_id, canonical_id))
+        source_history, target_id, _ = _resolve_target_history(
+            [row for alias in aliases for row in history_by_template.get(alias, ())],
+            source_template_id=source_id,
+            config_source_template_id=config_source_id,
+            selected_level_ids=set(),
+            canonical_template_id=canonical_id,
+        )
+        by_level: dict[str, list[HistoryRow]] = {}
+        for row in source_history:
+            by_level.setdefault(row.level_id, []).append(row)
+        if len(by_level) > 1 and by_level.pop("", None):
+            warnings.append(f"{output_id} 有未提供关卡 ID 的历史行，无法归入对应关卡。")
+        for history_level_id, level_history in (by_level or {"": []}).items():
+            if focus_level_id and history_level_id != focus_level_id:
+                continue
+            try:
+                csv_parameters = _history_dup_parameters(level_history)
+                scoped_configs = [
+                    row for row in configs if history_level_id and history_level_id in row.get("level_ids", ())
+                ] or configs
+                available_configs = [row for row in scoped_configs if row.get("status") == "ready"]
+                selected, selection_warnings = _select_one_baseline_per_output(
+                    available_configs, level_history,
+                )
+                warnings.extend(selection_warnings)
+                config = selected[0] if selected else {}
+                if len(csv_parameters) < 10 and (not config or (
+                    history_level_id and config.get("baseline_resolution", {}).get("demote_recommendation")
+                )):
+                    raise InputValidationError("CSV 副本参数不完整，且本地关卡配置无法唯一确定")
+                processed = processed_configs.get(output_id, [])
+                processed_row = _processed_config_for_history(
+                    processed, history_level_id, csv_parameters,
+                    fixed_alias=bool(canonical_id and source_id == f"fixed{canonical_id}"),
+                )
+                if processed and processed_row is None and len(csv_parameters) < 10:
+                    raise InputValidationError("加工源有多套副本配置，CSV 关卡 ID 和已提供的参数无法确定其中一套")
+            except InputValidationError as exc:
+                skip_item(output_id, history_level_id, str(exc))
+                continue
+            baseline_rows.append({
+                **config,
+                "source_template_id": source_id,
+                "output_template_id": output_id,
+                "config_source_template_id": config.get("config_source_template_id") or target_id,
+                "config_source_match": config.get("config_source_match") or (
+                    "canonical_history_alias" if source_id != target_id else "exact"
+                ),
+                "history_level_id": history_level_id,
+                "history_level_split": len(by_level) > 1,
+                "target_history": level_history,
+                "target_history_template_id": target_id,
+                "csv_parameters": csv_parameters,
+                "processed_row": processed_row,
+            })
+    if focus_output_id and len(baseline_rows) > 1:
+        raise InputValidationError("此模板对应多个关卡，请指定要重算的关卡 ID")
     report_progress(
         template_total=len(baseline_rows),
         duplicate_total_all=len(baseline_rows) * 10,
     )
-    warnings.extend(baseline_selection_warnings)
     if strategy_mode == "custom" and requested_group_id != DEFAULT_STRATEGY_GROUP_ID:
         warnings.append(f"已按自定义结构降难策略 {requested_group_id} 计算。")
     if optimize_all_duplicate_seeds:
@@ -2796,11 +3084,13 @@ def calibrate_consumption_parameters(
 
     matching_focus_found = False
     for template_index, baseline_row in enumerate(baseline_rows):
+        output_id = baseline_row["output_template_id"]
+        history_level_id = baseline_row["history_level_id"]
         report_progress(
             phase="template_preparation",
             message="正在准备模板与结构证据",
             template_completed=template_index,
-            current_template=str(baseline_row.get("output_template_id", "")),
+            current_template=f"{output_id} · {history_level_id}" if history_level_id else output_id,
             duplicate_index=None,
             duplicate_completed=template_index * 10,
             candidate_completed=0,
@@ -2808,13 +3098,7 @@ def calibrate_consumption_parameters(
         )
         if focus_output_id:
             matching_focus_found = True
-        if baseline_row.get("status") != "ready":
-            warnings.append(
-                f"{baseline_row.get('source_template_id', '未知模板')} 的保真基线不可用，已跳过消耗校准。"
-            )
-            continue
         source_id = str(baseline_row["source_template_id"])
-        output_id = str(baseline_row["output_template_id"])
         config_source_id = str(
             baseline_row.get("config_source_template_id") or source_id
         ).strip()
@@ -2829,18 +3113,17 @@ def calibrate_consumption_parameters(
             for value in baseline_row.get("level_ids", [])
             if str(value)
         }
-        (
-            target_history,
-            target_history_template_id,
-            target_history_scope,
-        ) = _resolve_target_history(
-            history,
-            source_template_id=source_id,
-            config_source_template_id=config_source_id,
-            selected_level_ids=selected_baseline_level_ids,
-            canonical_template_id=canonical_matches[output_id][0],
+        target_history = baseline_row["target_history"]
+        target_history_template_id = baseline_row["target_history_template_id"]
+        target_history_scope = (
+            "selected_baseline_level_ids" if history_level_id in selected_baseline_level_ids
+            else "history_level_id" if history_level_id else "resolved_source_alias_fallback"
         )
         source_group_id = str(baseline_row.get("strategy_group_id") or "").strip()
+        if not source_group_id:
+            observed_groups = {item.strategy_group_id for item in target_history if item.strategy_group_id}
+            if len(observed_groups) == 1:
+                source_group_id = next(iter(observed_groups))
         group_id = (
             requested_group_id
             if strategy_mode == "custom"
@@ -2880,10 +3163,15 @@ def calibrate_consumption_parameters(
         if manifest is None:
             warnings.append(f"{output_id} 缺少本次选择的 manifest，已跳过。")
             continue
-        loaded = load_template_id(profile, source_id)
+        try:
+            loaded = load_template_id(profile, source_id)
+        except (PuzzleToolError, OSError) as exc:
+            reason = str(exc) if isinstance(exc, PuzzleToolError) else f"模板仓库中找不到可读的原模板 {source_id}"
+            skip_item(output_id, history_level_id, reason)
+            continue
         expected_sha = str(manifest.get("source_sha256", ""))
         if expected_sha and loaded.level.sha256 != expected_sha:
-            warnings.append(f"{source_id} 当前源模板与导出快照不一致，已跳过。")
+            skip_item(output_id, history_level_id, f"{source_id} 当前源模板与导出快照不一致")
             continue
         online_source_level = loaded.level
         online_source_load_reason: str | None = None
@@ -2892,7 +3180,7 @@ def calibrate_consumption_parameters(
                 online_source_level = load_template_id(
                     profile, config_source_id
                 ).level
-            except PuzzleToolError:
+            except (PuzzleToolError, OSError):
                 online_source_level = None
                 online_source_load_reason = _fallback_reason(
                     "online_source_template_unavailable",
@@ -2962,51 +3250,60 @@ def calibrate_consumption_parameters(
                 f"Seed 牌面仿真使用首个位置 {selected_level_index}。"
             )
             warnings.append(position_warning)
-        originals = [parse_dup_param(value) for value in baseline_row["before_dup"]]
-        baselines = [
-            parse_dup_param(value) for value in baseline_row["recommended_dup"]
-        ]
-        if len(originals) != 10 or len(baselines) != 10:
-            warnings.append(f"{source_id} 缺少完整 DupPara1–10，已跳过。")
+        csv_parameters = baseline_row["csv_parameters"]
+        configured_originals = [parse_dup_param(value) for value in baseline_row.get("before_dup", ())]
+        if not configured_originals:
+            configured_originals = [csv_parameters[index] for index in range(1, 11)]
+        originals = [csv_parameters.get(index, parameter)
+                     for index, parameter in enumerate(configured_originals, start=1)]
+        processed_row = baseline_row["processed_row"]
+        reference_row = processed_row or baseline_row
+        configured_references = [parse_dup_param(value) for value in reference_row.get("before_dup", ())]
+        if not configured_references:
+            configured_references = configured_originals
+        ranking_references = [csv_parameters.get(index, parameter)
+                              for index, parameter in enumerate(configured_references, start=1)]
+        try:
+            if ranking_references == configured_references and reference_row.get("recommended_dup"):
+                baselines = [parse_dup_param(value) for value in reference_row["recommended_dup"]]
+            else:
+                baselines = _fidelity_for_csv_parameters(ranking_references, reference_row, manifest)
+        except InputValidationError as exc:
+            skip_item(output_id, history_level_id, str(exc))
             continue
-        processed_row = processed_comparisons.get(output_id)
+        if len(originals) != 10 or len(baselines) != 10:
+            skip_item(output_id, history_level_id, f"{source_id} 缺少完整 DupPara1–10")
+            continue
         source_parameter_comparison: dict[str, Any] | None = None
         processed_cap: int | None = None
-        ranking_references = list(originals)
         if processed_row and config_source_id != source_id:
-            processed_originals = [parse_dup_param(value) for value in processed_row["before_dup"]]
-            different = [index for index, (online, processed) in enumerate(zip(originals, processed_originals), start=1) if online.render() != processed.render()]
+            different = [index for index, (online, processed) in enumerate(zip(originals, ranking_references), start=1) if online != processed]
             source_parameter_comparison = {
                 "status": "different" if different else "same",
                 "processed_template_id": source_id,
                 "online_template_id": canonical_matches[output_id][0] or config_source_id,
                 "different_duplicates": different,
-                "processed_dup": [value.render() for value in processed_originals],
+                "processed_dup": [value.render() for value in ranking_references],
+                "processed_config_level_ids": list(processed_row.get("level_ids", ())),
                 "online_dup": [value.render() for value in originals],
                 "first_duplicate_max": None,
             }
             if different:
-                processed_cap = max(processed_originals[0].a, processed_originals[0].b)
+                processed_cap = max(ranking_references[0].a, ranking_references[0].b)
                 source_parameter_comparison["first_duplicate_max"] = processed_cap
-                # The replacement baseline must start from the parameters of
-                # the actual processed source, not from the online source.
-                baselines = [parse_dup_param(value) for value in processed_row["recommended_dup"]]
-                ranking_references = list(processed_originals)
-        # The canonical row supplies the historical target and online display.
-        # Parameters and no-structure source simulation belong to the actual source.
         search_originals = list(ranking_references)
-        if processed_cap is not None:
-            first = search_originals[0]
-            search_originals[0] = DupParam(min(first.a, processed_cap), first.seed, first.luck, min(first.b, processed_cap))
-            if baselines[0].a > search_originals[0].a or baselines[0].b > search_originals[0].b:
-                raise InputValidationError(f"{source_id} 的首副本搜索上限 {processed_cap} 低于可用参数下限，请检查两份模板的副本配置")
         search_baselines = list(baselines)
         automatic_bounds = None
-        if auto_first_duplicate_max:
+        if use_structure_cap:
             replaced_a_types, replaced_b_types = manifest_replacement_type_counts(manifest)
-            search_originals, search_baselines, automatic_bounds = _automatic_structure_search_bounds(
-                search_originals, baselines, replaced_a_types, replaced_b_types,
-            )
+            try:
+                search_originals, search_baselines, automatic_bounds = _automatic_structure_search_bounds(
+                    search_originals, baselines, replaced_a_types, replaced_b_types,
+                    specified_count=specified_deduction,
+                )
+            except InputValidationError as exc:
+                skip_item(output_id, history_level_id, str(exc))
+                continue
         monotonic_anchor_pairs = _monotonic_baseline_anchor_pairs(
             search_originals, search_baselines
         )
@@ -3068,7 +3365,7 @@ def calibrate_consumption_parameters(
             ) if duplicate_index in parsed_overrides else dict(online_targets[duplicate_index - 1])
             targets.append(target)
             consumption_anchor = {
-                "kind": "processed_source_assumed_equal_online" if processed_row and config_source_id != source_id else "canonical_online_target",
+                "kind": "processed_source_assumed_equal_online" if ranking_reference != original else "canonical_online_target",
                 "source_template_id": source_id,
                 "target_template_id": target_history_template_id,
                 "duplicate_index": duplicate_index,
@@ -3076,8 +3373,8 @@ def calibrate_consumption_parameters(
                 "online_dup": original.render(),
                 "target_consumption": target.get("value"),
                 "target_source": target.get("source"),
-                "observed": not bool(processed_row and config_source_id != source_id) and target.get("source") == "source_template_online",
-                "assumption_source": "user_authorized_working_assumption" if processed_row and config_source_id != source_id else None,
+                "observed": ranking_reference == original and target.get("source") == "source_template_online",
+                "assumption_source": "user_authorized_working_assumption" if ranking_reference != original else None,
             }
             focus_first = bool(focus_output_id and duplicate_index == 1)
             search_base = search_baselines[duplicate_index - 1]
@@ -3112,7 +3409,7 @@ def calibrate_consumption_parameters(
                 if focus_first:
                     candidate_max = max(parameter.a, parameter.b)
                     if (candidate_max > first_duplicate_max
-                            or (not auto_first_duplicate_max and candidate_max != first_duplicate_max)):
+                            or (not use_structure_cap and candidate_max != first_duplicate_max)):
                         continue
                 association = _cached_association_estimate(
                     association_history_index,
@@ -3303,6 +3600,8 @@ def calibrate_consumption_parameters(
                     reason = fallback_reason or _fallback_reason(
                         "seed_materialization_unavailable", "Seed 牌面仿真不可用"
                     )
+                    if confirm_seed_fallback is not None:
+                        confirm_seed_fallback(output_id, duplicate_index, reason)
                     seed_fallback_reasons.add(reason)
                     candidate["seed_simulation"] = _synthetic_seed_metadata(
                         level_index=selected_level_index,
@@ -3473,14 +3772,11 @@ def calibrate_consumption_parameters(
             )
             search_evidence_by_duplicate.append(search_evidence)
             candidates_by_duplicate.append(shortlist)
-            report_progress(
-                duplicate_completed=template_index * 10 + duplicate_index,
-            )
 
         if len(candidates_by_duplicate) != 10 or any(
             not values for values in candidates_by_duplicate
         ):
-            warnings.append(f"{source_id} 无法产生完整十档校准路径。")
+            skip_item(output_id, history_level_id, f"{source_id} 无法产生完整十档校准路径")
             continue
 
         # Dynamic programming keeps the ten rows jointly close to the source
@@ -3530,6 +3826,69 @@ def calibrate_consumption_parameters(
             zip(candidates_by_duplicate, selected_indices, targets), start=1
         ):
             selected = choices[selected_index]
+            prediction = selected["consumption_prediction"]
+            observed_cost = target["source_observed_value"]
+            if (
+                seed_config_context is not None
+                and online_source_level is not None
+                and selected_level_index is not None
+                and random_seed_group_reason is None
+                and (not consider_structure_strategy or configured_strategy["status"] == "available")
+                and observed_cost is not None and observed_cost > 0
+            ):
+                try:
+                    if not player_estimator_attempted:
+                        player_estimator_attempted = True
+                        player_estimator = load_player_consumption_estimator(
+                            seed_config_context["config_directory"]
+                        )
+                    if player_estimator is not None:
+                        report_progress(
+                            phase="player_rollout",
+                            duplicate_index=duplicate_index,
+                            message=f"正在模拟玩家实跑并估算副本 {duplicate_index} 的消耗",
+                        )
+                        board_options = {
+                            "level_index": selected_level_index,
+                            "config_context": seed_config_context,
+                            "random_seed_group_id": random_seed_group_id,
+                            "apply_structure_strategy": consider_structure_strategy,
+                            "strategy_group_id": group_id,
+                            "strategy_rule_raw": configured_strategy["rules"][duplicate_index - 1],
+                            "duplicate_index": duplicate_index,
+                        }
+                        source_labels, _ = _whole_board_labels(
+                            online_source_level, (), selected["original"],
+                            candidate=False, **board_options,
+                        )
+                        candidate_labels = selected.get("_candidate_labels")
+                        if candidate_labels is None:
+                            candidate_labels, _ = _whole_board_labels(
+                                loaded.level, replacements, selected["parameter"],
+                                candidate=True, **board_options,
+                            )
+                        rollout = player_estimator.predict(
+                            online_source_level, loaded.level, source_labels, candidate_labels,
+                            selected["original"], selected["parameter"],
+                            level_index=selected_level_index,
+                            level_id=history_level_id or None,
+                            duplicate=duplicate_index, observed_cost=observed_cost,
+                        )
+                        if rollout is not None:
+                            selected["consumption_prediction"] = {
+                                **rollout,
+                                "level_index": selected_level_index,
+                                "coverage_validated_for_current_scope": False,
+                                "structure_correction": {
+                                    "applied": False,
+                                    "model_id": prediction["structure_correction"].get("model_id"),
+                                    "reasons": prediction["structure_correction"].get("reasons", []),
+                                },
+                            }
+                except (ImportError, OSError, ValueError, TypeError, KeyError, ArithmeticError):
+                    warning = "部分副本的玩家仿真数据、配置或牌面不可用。"
+                    if warning not in warnings:
+                        warnings.append(warning)
             if used_infeasible_bounds_fallback:
                 selected["simulation_evidence_ready"] = False
                 selected["simulation_evidence_reasons"] = sorted(
@@ -3616,6 +3975,7 @@ def calibrate_consumption_parameters(
                     "alternatives": alternatives,
                 }
             )
+            report_progress(duplicate_completed=template_index * 10 + duplicate_index)
 
         for previous, current in zip(duplicate_rows, duplicate_rows[1:]):
             previous_new = parse_dup_param(previous["recommended_dup"])
@@ -3667,6 +4027,9 @@ def calibrate_consumption_parameters(
                     for key in ("kind", "source_template_id", "target_template_id", "observed", "assumption_source")
                 },
                 "output_template_id": output_id,
+                "history_level_id": history_level_id,
+                "history_level_split": baseline_row["history_level_split"],
+                "history_parameter_duplicate_indices": sorted(csv_parameters),
                 "source_fingerprints": {
                     "online_source_template_id": config_source_id,
                     "source_board_template_id": (
@@ -3898,6 +4261,7 @@ def calibrate_consumption_parameters(
         "schema_version": 1,
         "mode": "target_consumption_calibration",
         "auto_first_duplicate_max": auto_first_duplicate_max,
+        "first_duplicate_structure_deduction_count": specified_deduction,
         "history_file": history_filename,
         "history_sha256": history_coverage["sha256"],
         "history_rows": len(history),
@@ -4007,6 +4371,7 @@ def calibrate_consumption_parameters(
             "strategy_group_is_not_random_seed_group": True,
         },
         "rows": result_rows,
+        "skipped_items": skipped_items,
         "warnings": list(dict.fromkeys(warnings + strategy_warnings)),
         "source_tables": baseline.get("source_tables", {}),
         "access": "read_only",

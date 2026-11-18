@@ -1,0 +1,11 @@
+{
+  "description": "独立内置副本，不在运行时读取来源工程。更新时同步核验模型特征版本与模拟测试。",
+  "source": "关键结构生成工具/scripts/puzzle_core",
+  "sha256": {
+    "template_reader.py": "0a2d0b09dfc9adb70674447ee365528cfa188667dd638b650246f2f32b35ce0b",
+    "protobuf_wire.py": "30dce5b2ded35d37eae0a6756050a54bec36a222697f2583a97df563605558e9",
+    "geometry.py": "1370fd44c0c128108aa3705cd3fdc066e587947cbfea17a8b71696d084939dc6",
+    "legacy_materialization.py": "e9379f7d7230ade8a4fc862c43101eb54df4a3509ba8fbe698acae8d34feec2d",
+    "online_player_simulation.py": "0491120d22705f4ee7d3f8fe16b6d1e7c152bf01664c17c6447e6c8de7b572a1"
+  }
+}

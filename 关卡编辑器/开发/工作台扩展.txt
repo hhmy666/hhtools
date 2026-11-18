@@ -1,0 +1,1213 @@
+function boardProblems() {
+  const board = { tiles: st.master.tiles.map((t,i)=>({index:i,x:t.x,y:t.y,z:t.z,tile_id:t.tileId})),
+    towers: st.master.towers.map((t,i)=>({...t,index:i})) };
+  const cc = coverEditor();
+  const cover = cc.issueIndices(board);
+  return {cover:board.tiles.filter(t=>cover.has(t.index)), floating:cc.unsupportedTiles(board)};
+}
+function moveBoard(dx:number,dy:number) {
+  translateX += dx; translateY += dy;
+  edit(m=>translateAll(m,dx,dy));
+}
+function bindLocal() {
+  bindBatchTools({
+    read: async (id: string) => {
+      const response = await fetch(TEMPLATE_URL(id) + '?preview=1');
+      if (!response.ok) await readLocal(response);
+      return new Uint8Array(await response.arrayBuffer());
+    },
+    upload: (raw: Uint8Array) => writeLocal('/api/upload?preview=1', raw),
+    config: async () => {
+      await ensureLevelDataLoaded();
+      return drawerConfig?.rows ?? [];
+    },
+    levelNumber: (id: string) => indexDrawer.rows.find(row => row.levelId === id)?.levelIndex
+      ?? (Number(id) || 1),
+    capture: captureTemplate,
+    openScreenshotFolder: () => writeLocal('/api/template-screenshot/open-folder'),
+  });
+  bindCoverBoard();
+  document.addEventListener('keydown', event => {
+    const target = event.target as Element;
+    if (fillPreview || event.isComposing || event.ctrlKey || event.metaKey || event.altKey ||
+        target?.closest('input,textarea,select,[contenteditable],dialog') ||
+        ($('[data-editpanel]') as HTMLElement).hidden) return;
+    const shortcut = event.key.toLowerCase();
+    const button = [...document.querySelectorAll<HTMLButtonElement>('[data-palette-shortcut]')]
+      .find(tool => tool.dataset.paletteShortcut?.toLowerCase() === shortcut);
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    button.click();
+  }, true);
+  const maxLayer = $('[data-showzlabel]') as HTMLInputElement;
+  maxLayer.addEventListener('change', () => {
+    const value = maxLayer.value.trim();
+    const number = value === '无限制' || !value ? 0 : Number(value);
+    if (!Number.isSafeInteger(number) || number < 0) {
+      localStatus('MaxZ 请输入非负整数，0 表示无限制。', true);
+      renderLayer();
+      return;
+    }
+    setMaxZ(number);
+  });
+  maxLayer.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.isComposing) {
+      event.preventDefault();
+      maxLayer.blur();
+    }
+  });
+  $('[data-showz="up"]')!.addEventListener('click', () => setMaxZ(displayedMaxZ() + 1));
+  $('[data-showz="dn"]')!.addEventListener('click', () => setMaxZ(displayedMaxZ() - 1));
+  $('[data-maxz-reset]')!.addEventListener('click', () => setMaxZ(0));
+  window.addEventListener('keydown', e=>{
+    if(e.key.toLowerCase()!=='z'||e.ctrlKey||e.metaKey||e.altKey||e.isComposing||(e.target as Element)?.closest('input,textarea,select,[contenteditable]'))return;
+    if(fillPreview || ($('[data-editpanel]') as HTMLElement).hidden)return;
+    e.preventDefault(); if(e.shiftKey) doRedo(); else doUndo();
+  });
+  const id = $('[data-tplid]') as HTMLInputElement;
+  id.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.isComposing) {e.preventDefault(); ($('[data-load]') as HTMLButtonElement).click();} });
+  id.addEventListener('input',()=>{
+    id.removeAttribute('aria-invalid');
+    invalidateSaved();
+  });
+  window.addEventListener('beforeunload',e=>{if(hasEdits() || batchEntries.some((entry, index) => index !== batchActive && entry.context && entry.context.signature !== JSON.stringify(entry.context.state.master)) ||
+    (batchPhase !== 'single' && singleContext && singleContext.signature !== JSON.stringify(singleContext.state.master))){e.preventDefault();}});
+  $('[data-mode-play]')!.addEventListener('click', () => setPlayMode(($('.playpanel') as HTMLElement).hidden));
+  bindBatch();
+  bindManual();
+  $('[data-reset-move]')!.addEventListener('click',()=>{if(translateX||translateY) moveBoard(-translateX,-translateY);});
+  for (const button of $$('[data-rotate]')) button.addEventListener('click',()=>{
+    const clockwise=(button as HTMLElement).dataset.rotate==='cw';
+    const transform = (t:{x:number,y:number})=>clockwise?{x:17-t.y,y:t.x+1}:{x:t.y-1,y:17-t.x};
+    [translateX,translateY] = clockwise?[-translateY,translateX]:[translateY,-translateX];
+    edit(m=>({...m, tiles:m.tiles.map(t=>({...t,...transform(t)})),
+      towers:m.towers.map(t=>({...t,...transform(t),direction:(t.direction+(clockwise?3:1))%4}))}));
+  });
+  $('[data-restore]')!.addEventListener('click',()=>{
+    if(initialBoard && hasEdits() && confirm('恢复到刚载入的模板？可以撤销本次恢复。')) {
+      translateX=translateY=0; edit(()=>structuredClone(initialBoard!));
+    }
+  });
+  for (const button of $$('[data-clear-layers]')) button.addEventListener('click',()=>{
+    if(st.showMode==='all') {localStatus('请先输入 MaxZ，选择要操作的层。',true); return;}
+    const above = (button as HTMLElement).dataset.clearLayers==='above';
+    const keep = (t:EdTile)=>above?t.z<=st.showZ:t.z!==st.showZ;
+    const tiles = st.master.tiles.filter(keep), n = st.master.tiles.length-tiles.length;
+    if(n && !above) {
+      const dialog=$('[data-clear-layer-dialog]') as HTMLDialogElement;
+      const z=st.showZ;
+      dialog.querySelector('[data-clear-count]')!.textContent='当前层共 '+n+' 张。删除整层会将上方牌下移一层。';
+      dialog.querySelectorAll('button[data-delete-choice]').forEach(el=>{(el as HTMLButtonElement).onclick=()=>{
+        dialog.close(); const closeGap=(el as HTMLElement).dataset.deleteChoice==='layer';
+        edit(m=>({...m,tiles:m.tiles.filter(t=>t.z!==z).map(t=>closeGap&&t.z>z?{...t,z:t.z-1}:t)}));
+        if(closeGap) setMaxZ(z);
+      };});
+      dialog.showModal();
+    } else if(n && confirm('删除 '+n+' 张牌？可以撤销。')) edit(m=>({...m,tiles}));
+    else if(!n) localStatus('所选范围没有牌。');
+  });
+  for(const button of $$('[data-coordinate]')) button.addEventListener('click',()=>{
+    const fields = ['x','y','z'].map(k=>($('[data-coord-'+k+']') as HTMLInputElement).value);
+    if(fields.some(v=>v===''||!Number.isSafeInteger(Number(v)))) {localStatus('请填写整数坐标。',true);return;}
+    const [x,y,z]=fields.map(Number);
+    if(!inRange(x,y)||z<0||z>99) {localStatus('坐标范围为 X 0–16、Y 0–18、Z 0–99。',true);return;}
+    if((button as HTMLElement).dataset.coordinate==='remove') edit(m=>({...m,tiles:m.tiles.filter(t=>t.x!==x||t.y!==y||t.z!==z)}));
+    else if(st.brush.kind==='tile'||st.brush.kind==='random') edit(m=>placeTile(m,x,y,z,st.brush.value));
+    else localStatus('请选择一个 Tile 笔刷。',true);
+  });
+  const previewButton = $('[data-fill-preview]') as HTMLButtonElement;
+  previewButton.addEventListener('click', () => {
+    if (fillPreview) {
+      endFillPreview();
+      drawEdit();
+      localStatus('已退出预览，返回编辑。');
+      return;
+    }
+    if (busy || !st.master.tiles.length) {
+      localStatus('请先载入模板或摆牌。', true);
+      return;
+    }
+    const seed = curDup().seed;
+    fillPreview = { source: st.master, board: derivePlayMaster(seed), maxZ: displayedMaxZ() };
+    const seedInput = $('[data-preview-seed]') as HTMLInputElement;
+    seedInput.value = String(seed);
+    previewButton.textContent = '退出预览';
+    previewButton.setAttribute('aria-pressed', 'true');
+    setPreviewControls(true);
+    localStatus('预览第 ' + (st.slot + 1) + ' 次玩的牌面。可调整随机种子和显示层。');
+    drawEdit();
+    seedInput.focus();
+  });
+  const seedInput = $('[data-preview-seed]') as HTMLInputElement;
+  seedInput.addEventListener('input', () => {
+    if (!fillPreview) return;
+    const seed = seedInput.valueAsNumber;
+    if (!Number.isInteger(seed) || !seedInput.validity.valid) {
+      seedInput.setAttribute('aria-invalid', 'true');
+      $('[data-preview-seed-status]')!.textContent = '请输入有效的 32 位整数种子。';
+      return;
+    }
+    seedInput.removeAttribute('aria-invalid');
+    $('[data-preview-seed-status]')!.textContent = '';
+    fillPreview.board = derivePlayMaster(seed);
+    paintCoverBoard();
+  });
+  document.addEventListener('keydown', event => {
+    if (fillPreview && event.key === 'Escape' && !document.querySelector('dialog[open]')) {
+      event.preventDefault();
+      previewButton.click();
+      previewButton.focus();
+    }
+  });
+  ($('[data-pool-file]') as HTMLInputElement).addEventListener('change',async e=>{
+    const field=e.target as HTMLInputElement, file=field.files?.[0]; field.value='';
+    if(!file)return;
+    try {
+      if(file.size>2*1024*1024) throw Error('文件不能超过 2 MB。');
+      const rows=parseLevelTilePools(await file.text());
+      if(!rows.length) throw Error('没有读到类型池分段，请选择 config_client_level_tile.csv。');
+      levelPools=rows; restartPlay(); renderRightPanels();
+      localStatus('已应用实验组类型池：'+file.name+'（'+rows.length+' 个分段）。');
+    } catch(e) {localStatus((e as Error).message,true);}
+  });
+  let problemPosition=0;
+  for(const button of $$('[data-locate-cover],[data-locate-float]')) button.addEventListener('click',()=>{
+    const list=button.hasAttribute('data-locate-cover')?boardProblems().cover:boardProblems().floating;
+    if(!list.length)return;
+    const p=list[problemPosition++%list.length]!;
+    st.showMode='multi';st.showZ=p.z; issueSpot=p.x+','+p.y+','+p.z;
+    for(const k of ['x','y','z'] as const) ($('[data-coord-'+k+']') as HTMLInputElement).value=String(p[k]);
+    renderLayer();drawEdit(); localStatus('已定位：X '+p.x+'，Y '+p.y+'，Z '+p.z+'。');
+  });
+  const clear = $('[data-clear]')!;
+  clear.addEventListener('click',e=>{if(st.master.tiles.length&&!confirm('清空模板？可以撤销。'))e.stopImmediatePropagation();},true);
+  const seedMode=$('[data-seed-mode]') as HTMLSelectElement;
+  seedMode.addEventListener('change',()=>{groupRules=seedMode.value==='group'; restartPlay();renderRightPanels();});
+  ($('[data-iap-cut]') as HTMLInputElement).addEventListener('change',e=>{iapCut=Math.max(0,Number((e.target as HTMLInputElement).value)||0);restartPlay();});
+  $('[data-apply-ab]')!.addEventListener('click',()=>{
+    const input=$('[data-effective-dup]') as HTMLInputElement;
+    const text=input.value.trim();
+    if(!/^\d+\|-?\d+\|\d+\|\d+$/.test(text)) {localStatus('粘贴生效 DupPara：A种类数|随机种子|塔幸运值|B种类数。',true);return;}
+    const [a,seed,lucky,b]=text.split('|').map(Number);
+    if([a,seed,lucky,b].some(v=>!Number.isSafeInteger(v)||Math.abs(v)>2147483647)||a>100||b>100||lucky>100) {localStatus('请核对数值：A/B 种类数和塔幸运值为 0–100，随机种子为 32 位有符号整数。',true);return;}
+    st.dup[st.slot]={a,seed,lucky,b}; renderDupRow();renderDupDrawer();restartPlay();renderRightPanels();scheduleDraftSave();
+    localStatus('已将实验组生效参数应用到第 '+(st.slot+1)+' 档。');
+  });
+  $('[data-copy-board]')!.addEventListener('click',async()=>{
+    const r=derivePlayMaster();
+    const data={templateId:st.master.templateId,level:st.levelNum,dupSlot:st.slot+1,dupPara:curDup(),iapCut,rule:groupRules?'seedGroup':'unityDupPara',seedGroup:groupRules?st.randomSeedGroupId:null,strategyGroup:groupRules?st.strategyGroupId:null,tiles:r.tiles.map(t=>[t.x,t.y,t.z,t.tileId])};
+    try{await navigator.clipboard.writeText(JSON.stringify(data,null,2));localStatus('已复制本次试玩参数和牌面。');}
+    catch{localStatus('无法复制，请检查浏览器剪贴板权限。',true);}
+  });
+  bindRepositorySettings();
+  for(const d of $$('dialog')) {d.querySelector('button[data-dismiss]')?.addEventListener('click',()=> (d as HTMLDialogElement).close());}
+}
+
+type CaptureJob = { master: Master; dup: DupPara; level: number; slot: number; seedGroup: string; strategyGroup: string };
+
+async function captureTemplate(job: CaptureJob, patterned: boolean, name: string) {
+  const board = patterned ? derivePlayMaster(undefined, job) : job.master;
+  const names = patterned ? new Set(board.tiles.map(tile => iconOf(tile.tileId))) : new Set<string>();
+  for (const icon of names) ensureIcon(icon);
+  const images = [...names].flatMap(name => name && icons.has(name) ? [icons.get(name)!] : []);
+  await Promise.allSettled([tileBg, ...images, ...(patterned ? debuffIcons.values() : [])].map(image => image.decode()));
+  const surface = document.createElement('canvas');
+  surface.width = 1200;
+  surface.height = 1350;
+  render(surface.getContext('2d')!, surface.width, surface.height, {
+    master: board, view: patterned ? fitPlayableBoard(board, surface.width, surface.height)
+      : {s:64, ox:surface.width / 2 - 9 * 64, oy:surface.height / 2 - 10 * 64},
+    currentZ: 9999, templateScreenshot: !patterned,
+    upper: 'fade', showMaxZ: null, cover: coverFlags(board), colorOf,
+    icons: patterned ? icons : undefined, iconOf: patterned ? iconOf : undefined,
+    labelOf: patterned ? editorTileLabel : id => editorTileLabel(id) + (id === -10 || id === -11 ? '?' : ''),
+    hover: null, showRange: false, tileBg,
+    debuffIcons: patterned ? debuffIcons : undefined,
+    tileRect: playRectOf, cropTileBgSides: true, iconOffsetY: -14,
+  });
+  const png = await new Promise<Blob | null>(resolve => surface.toBlob(resolve, 'image/png'));
+  if (!png) throw new Error('浏览器未能生成 PNG。');
+  return writeLocal('/api/template-screenshot?' + new URLSearchParams({name}), new Uint8Array(await png.arrayBuffer()));
+}
+
+function bindRepositorySettings() {
+  const dialog = $<HTMLDialogElement>('[data-settings-dialog]')!;
+  const form = $<HTMLFormElement>('[data-repository-form]')!;
+  const path = $<HTMLInputElement>('#repository-path')!;
+  const output = $<HTMLInputElement>('#output-path')!;
+  const status = $('[data-repository-status]')!;
+  const pick = $<HTMLButtonElement>('[data-repository-pick]')!;
+  const pickOutput = $<HTMLButtonElement>('[data-output-pick]')!;
+  const save = $<HTMLButtonElement>('[data-repository-save]')!;
+  const message = (text: string, error = false) => {
+    status.textContent = text;
+    status.classList.toggle('is-error', error);
+  };
+  const setPending = (pending: boolean) => {
+    path.readOnly = output.readOnly = pending;
+    pick.disabled = pickOutput.disabled = save.disabled = pending;
+  };
+  async function loadSettings() {
+    setPending(true);
+    try {
+      const result = await readLocal(await fetch('/api/status'));
+      path.value = result.repository;
+      output.value = result.output;
+      message(result.ready ? '' : '未找到模板仓库，请输入路径或选取目录。', !result.ready);
+    } catch {
+      message('无法读取本地设置，请重新打开启动器。', true);
+    } finally { setPending(false); }
+  }
+  $('[data-settings]')!.addEventListener('click', () => {
+    if (!dialog.open) dialog.showModal();
+    if (!save.disabled) void loadSettings();
+  });
+  async function pickDirectory(target: 'repository' | 'output', input: HTMLInputElement) {
+    setPending(true);
+    message('请在系统窗口里选取目录。');
+    try {
+      const result = await writeLocal('/api/repository/pick?target=' + target);
+      if (result[target]) input.value = result[target];
+      message(result[target] ? '点击「保存路径」应用所选目录。' : '');
+    } catch (error) { message((error as Error).message, true); }
+    finally { setPending(false); }
+  }
+  pick.addEventListener('click', () => void pickDirectory('repository', path));
+  pickOutput.addEventListener('click', () => void pickDirectory('output', output));
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (save.disabled) return;
+    setPending(true);
+    try {
+      const response = await fetch('/api/repository', {
+        method: 'POST', headers: {...localHeaders, 'Content-Type': 'application/json'},
+        body: JSON.stringify({repository: path.value, output: output.value}),
+      });
+      const result = await readLocal(response);
+      path.value = result.repository;
+      output.value = result.output;
+      if (result.outputChanged) {
+        savedName = '';
+        if (singleContext) singleContext.savedName = '';
+        for (const entry of batchEntries) if (entry.context) entry.context.savedName = '';
+        invalidateSaved();
+      }
+      await loadTemplateList();
+      message('路径已保存。');
+    } catch (error) { message((error as Error).message, true); }
+    finally { setPending(false); }
+  });
+}
+
+let boardPointer = { x:2, y:2 }, shownCursor = false;
+let issueSpot = '';
+const coverGrid = (() => {
+  const points = [];
+  for(let y=0;y<19;y++) for(let x=0;x<17;x++)
+    points.push('<circle cx="'+(x+1)+'" cy="'+(y+1)+'" r=".035" class="cc-dot-'+(x%2===y%2?'red':'blue')+'"/>');
+  return '<svg class="cc-grid" viewBox="0 0 18 20" aria-hidden="true"><rect x="2.5" y="2.5" width="13" height="15" class="cc-frame"/><path d="M9 0V20M0 10H18" class="cc-axis"/>'+points.join('')+'</svg>';
+})();
+function coversForEditor(master = st.master) {
+  const board = { tiles:master.tiles.map((t,i)=>({index:i,x:t.x,y:t.y,z:t.z,tile_id:t.tileId,
+    tower_index:master.towers.findIndex(tw=>tw.x===t.x&&tw.y===t.y)})), towers:master.towers.map((t,i)=>({...t,index:i})) };
+  return board;
+}
+function paintCoverBoard() {
+  const master = fillPreview?.board ?? st.master;
+  const active = $('[data-cover-board]')!;
+  $('[data-cover-board]')!.classList.toggle('is-fill-preview', Boolean(fillPreview));
+  active.innerHTML = coverMarkup(master, displayedMaxZ(), true, Boolean(fillPreview));
+  coverCursor(false);
+}
+
+const tileNames = new Map<number, string>();
+const COIN_BLOCKER: Brush = { kind: 'tile', value: 10000, label: '金币障碍牌', color: '#f1c531' };
+
+function editorTileLabel(id: number): string {
+  if (isRandomMarker(id)) return tileDisplayLabel(id);
+  if (isVariantType(id)) return '随' + (variantKey(id) + 1);
+  return tileNames.get(id) ?? '未知牌';
+}
+
+function escapeTileLabel(label: string): string {
+  return label.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+}
+
+function coverMarkup(master: Master, maxZ = 0, interactive = false, preview = false) {
+  const cc = coverEditor(), board = coversForEditor(master);
+  const tiles=cc.visibleTiles(board,maxZ,false);
+  const issues=cc.issueIndices(board);
+  const floating=new Set(cc.unsupportedTiles(board).map((t:any)=>t.index));
+  return coverGrid+tiles.map((t:any)=>{
+    const position=cc.projection(board,t), anchor=cc.anchor(position);
+    const covered=tiles.some((other:any)=>other.z>t.z&&cc.overlap(cc.projection(board,other),position)>0);
+    const id=t.tile_id, css=['cc-tile',covered?'is-covered':'',maxZ > 0 && t.z + 1 < maxZ?'is-context':'',issues.has(t.index)?'is-issue':'',floating.has(t.index)?'is-unsupported':'',
+       interactive && ((st.selectMode&&st.selection.has(t.x+','+t.y+','+t.z))||issueSpot===t.x+','+t.y+','+t.z)?'is-located':''].join(' ');
+    const label = escapeTileLabel(editorTileLabel(id));
+    const detail=label+' · 第 '+(t.z+1)+' 层 · ('+t.x+', '+t.y+', '+t.z+')'+(t.tower_index>=0?' · 塔内':'')+(floating.has(t.index)?' · 悬空':'');
+    const debuff=master.tiles[t.index]?.debuffIndex;
+    const icon = iconOf(id);
+    const tag = preview ? 'span' : 'button';
+    const attributes = preview ? 'role="img"' : 'type="button" tabindex="-1"';
+    const face = (icon ? '<img class="preview-tile-icon" src="' + ICON_BASE + encodeURIComponent(icon) + '.png" alt="">' : '')
+      + '<span class="cc-tile-label"' + (icon ? ' hidden' : '') + '>' + label + '</span>';
+    return '<'+tag+' '+attributes+' class="'+css+'" data-board-index="'+t.index+'" data-tile-id="'+id+'" style="left:'+anchor.left+'%;top:'+anchor.top+'%" title="'+detail+'" aria-label="'+detail+'"><span class="cc-tile-layer">'+(t.z+1)+'</span>'+face+(typeof debuff==='number'&&debuff>=0?'<span class="board-debuff">特殊</span>':'')+'</'+tag+'>';
+  }).join('')+board.towers.filter(t=>!board.tiles.some(p=>p.x===t.x&&p.y===t.y)).map(t=>{
+    const a=cc.anchor(t);return '<span class="board-tower" style="left:'+a.left+'%;top:'+a.top+'%" title="塔底座">'+(['↑','←','↓','→'][t.direction]||'塔')+'</span>';
+  }).join('')+(tiles.length?'':'<p class="cc-board-empty">'+(board.tiles.length?'这一层没有牌':'输入模板 ID 读取，或在画布上摆牌')+'</p>')+'<div class="cc-tile-cursor" hidden aria-hidden="true"></div>';
+}
+function coverCursor(erase:boolean) {
+  const cursor=$('[data-cover-board] .cc-tile-cursor') as HTMLElement;
+  if(!cursor)return;
+  const cc=coverEditor(), board=coversForEditor(), {x,y}=boardPointer;
+  const position=cc.cursorPlacement(board,erase?'delete':'add',x,y,st.showMode==='all'?0:st.showZ+1);
+  const anchor=cc.anchor(position);
+  cursor.style.left=anchor.left+'%'; cursor.style.top=anchor.top+'%';
+  cursor.hidden=Boolean(fillPreview)||!shownCursor||!inRange(x,y)||(erase&&position.z==null);
+  cursor.classList.toggle('is-delete',erase);
+  const brush = st.brush;
+  const brushLabel = brush?.kind === 'tile' || brush?.kind === 'random'
+    ? editorTileLabel(brush.value) : brush?.label || '摆牌';
+  cursor.dataset.label=(erase?'删除':activeTowerMove!==null?'移动塔':brushLabel)+(position.z==null?'':' · 第 '+(position.z+1)+' 层');
+}
+function bindCoverBoard() {
+  const el=$('[data-cover-board]') as HTMLElement, cc=coverEditor();
+  document.addEventListener('error', event => {
+    const image = event.target;
+    if (!(image instanceof HTMLImageElement) || !image.matches('.cc-tile > .preview-tile-icon')) return;
+    image.hidden = true;
+    image.nextElementSibling?.removeAttribute('hidden');
+  }, true);
+  let dragging=false, changed=false, start:Master|null=null, last='';
+  function action(erase:boolean,index?:number) {
+    if (fillPreview) {
+      localStatus('点击「返回母版」继续摆牌。');
+      return false;
+    }
+    const {x,y}=boardPointer, m=st.master;
+    if(!inRange(x,y)||!st.brush)return false;
+    const brush=st.brush, board=coversForEditor(), layer=st.showMode==='all'?0:st.showZ+1;
+    const tile=cc.target(board,'delete',x,y,layer,index);
+    if (activeTowerMove !== null && !erase) {
+      const anchor = tile?.tower_index >= 0 ? board.towers[tile.tower_index] : { x, y };
+      const tower = m.towers.find(item => item.x === anchor.x && item.y === anchor.y);
+      if (!tower) return false;
+      const [dx, dy] = TOWER_MOVE_TOOLS[activeTowerMove].delta;
+      const nextX = tower.x + dx;
+      const nextY = tower.y + dy;
+      if (!inRange(nextX, nextY) || m.towers.some(item => item.x === nextX && item.y === nextY)) return false;
+      st.master = {
+        ...m,
+        towers: m.towers.map(item => item === tower ? { ...item, x: nextX, y: nextY } : item),
+        tiles: m.tiles.map(item => item.x === tower.x && item.y === tower.y
+          ? { ...item, x: nextX, y: nextY } : item),
+      };
+      renderAfterEdit(false);
+      drawEdit();
+      return true;
+    }
+    if(st.selectMode&&!erase) {
+      if(tile){const k=tileKey(m.tiles[tile.index]); if(st.selection.has(k))st.selection.delete(k);else st.selection.add(k);}
+      else st.selection.clear();
+      renderSelHint();drawEdit();return false;
+    }
+    let result;
+    if(erase||brush.kind==='erase'){
+      if(tile && m.tiles[tile.index]!.debuffIndex>=0) result=removeDebuffAt(m,tile.z,tile.x,tile.y);
+      else if(tile) result={master:{...m,tiles:m.tiles.filter((_,i)=>i!==tile.index)},changed:true};
+      else result=removeTowerAt(m,x,y);
+    } else if(brush.kind==='tower') result=placeTower(m,x,y,brush.value);
+    else if(brush.kind==='debuff') {
+      if(tile) result=addDebuffAt(m,tile.x,tile.y,brush.value);
+      else return false;
+    } else {
+      // Tile hit-testing is for selecting and erasing. Placement follows the grid cursor.
+      const p=cc.target(board,'add',x,y,layer);
+      result=placeTile(m,p.x,p.y,p.z,brush.value);
+    }
+    if(result.changed){st.master=result.master;renderAfterEdit(false);drawEdit();return true;}
+    return false;
+  }
+  function finish() {
+    if(!dragging)return;
+    dragging=false;
+    if(changed&&start){history.push(start);updateUndoButtons();scheduleDraftSave();}
+    start=null;changed=false;last='';
+  }
+  function pointer(e:PointerEvent) {
+    boardPointer=cc.point(e.clientX,e.clientY,el.getBoundingClientRect());
+    shownCursor=true;
+  }
+  el.addEventListener('pointerdown',e=>{
+    if(fillPreview || (e.button!==0&&e.button!==2))return;
+    e.preventDefault();el.focus({preventScroll:true});pointer(e);
+    const index=(e.target as Element).closest('[data-board-index]')?.getAttribute('data-board-index');
+    start=st.master;dragging=true;last=boardPointer.x+':'+boardPointer.y;
+    changed=action(e.button===2,index==null?undefined:Number(index));
+    coverCursor(e.button===2);
+  });
+  el.addEventListener('pointermove',e=>{
+    pointer(e);
+    if(dragging&&e.buttons&&activeTowerMove===null) {
+      const cell=boardPointer.x+':'+boardPointer.y;
+      if(last!==cell){last=cell;changed=action((e.buttons&2)!==0)||changed;}
+    }
+    coverCursor((e.buttons&2)!==0);
+  });
+  el.addEventListener('contextmenu',e=>e.preventDefault());
+  el.addEventListener('pointerleave',()=>{shownCursor=false;coverCursor(false);});
+  window.addEventListener('pointerup',finish);window.addEventListener('pointercancel',finish);
+  el.addEventListener('keydown',e=>{
+    if (fillPreview) return;
+    const delta:Record<string,number[]>={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
+    if(e.altKey && delta[e.key]) {e.preventDefault();boardPointer={x:Math.max(0,Math.min(16,boardPointer.x+delta[e.key][0]!)),y:Math.max(0,Math.min(18,boardPointer.y+delta[e.key][1]!))};shownCursor=true;coverCursor(false);}
+    else if(e.key==='Enter'||e.key==='Delete'||e.key===' ') {e.preventDefault();e.stopPropagation();start=st.master;dragging=true;changed=action(e.key==='Delete');finish();}
+  });
+}
+
+const TOWER_MOVE_TOOLS = [
+  { key: 'W', label: '向上移动塔', delta: [0, -1] },
+  { key: 'A', label: '向左移动塔', delta: [-1, 0] },
+  { key: 'S', label: '向下移动塔', delta: [0, 1] },
+  { key: 'D', label: '向右移动塔', delta: [1, 0] },
+] as const;
+let activeTowerMove: number | null = null;
+let normalPaletteExpanded = false;
+
+let fillPreview: { source: Master; board: Master; maxZ: number } | null = null;
+
+function setPreviewControls(preview: boolean) {
+  document.body.classList.toggle('is-previewing', preview);
+  ($('[data-preview-options]') as HTMLElement).hidden = !preview;
+  // Keep the editing controls out of the tab order and prevent accidental clicks.
+  const selectors = [
+    '.workspace-topbar .work-row', '.batch-toolbar', '[data-mode-play]', '[data-settings]',
+    '.inspector-action-row', '.inspector-controls > .edit-tools', '.unity-tool-heading',
+    '.unity-palette', '.editor-play-settings', '.drawerdock', '.batch-card header',
+    '.batch-board-placeholder',
+  ];
+  for (const el of $$(selectors.join(','))) (el as HTMLElement).inert = preview;
+}
+
+function endFillPreview() {
+  if (fillPreview) setPreviewControls(false);
+  fillPreview = null;
+  ($('[data-preview-seed]') as HTMLInputElement).removeAttribute('aria-invalid');
+  $('[data-preview-seed-status]')!.textContent = '';
+  const button = $('[data-fill-preview]')!;
+  button.textContent = '预览';
+  button.setAttribute('aria-pressed', 'false');
+}
+
+function showPaletteCount(element: Element, total: number) {
+  const missing = (3 - total % 3) % 3;
+  element.textContent = total + ' (' + missing + ')';
+  element.classList.toggle('is-incomplete', missing > 0);
+}
+
+function renderUnityPalette() {
+  const paletteRoot = $('[data-brush]')!;
+  const counts = new Map<number, number>();
+  for (const tile of st.master.tiles) {
+    counts.set(tile.tileId, (counts.get(tile.tileId) ?? 0) + 1);
+  }
+  const focused = (document.activeElement as HTMLElement | null)?.dataset.paletteKey;
+  paletteRoot.replaceChildren();
+
+  function addSection(title: string, brushes: Brush[], normal = false): HTMLDivElement | undefined {
+    if (!brushes.length) return;
+    const section = document.createElement('section');
+    section.className = 'unity-palette-section';
+    const heading = document.createElement('h4');
+    heading.textContent = title;
+    const sectionHeader = document.createElement('div');
+    sectionHeader.className = 'palette-section-header';
+    sectionHeader.append(heading);
+    let expandButton: HTMLButtonElement | undefined;
+    if (normal && brushes.length > 8) {
+      expandButton = document.createElement('button');
+      expandButton.type = 'button';
+      expandButton.className = 'palette-expand';
+      expandButton.setAttribute('aria-controls', 'normal-palette');
+      sectionHeader.append(expandButton);
+    }
+    const grid = document.createElement('div');
+    grid.className = normal ? 'unity-palette-grid unity-normal-grid' : 'unity-palette-grid';
+    section.append(sectionHeader, grid);
+    paletteRoot.append(section);
+
+    for (const brush of brushes) {
+      const button = document.createElement('button');
+      const matchesBrush = sameBrush(brush, st.brush);
+      const shortcuts = ['Q', 'E', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'M', 'N'];
+      const shortcut = brush.kind === 'random' ? shortcuts[-10 - brush.value]
+        : brush.kind === 'erase' ? 'X'
+        : brush.kind === 'tower' ? ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'][brush.value]
+        : '';
+      const name = brush.kind === 'erase' ? '橡皮擦'
+        : brush.kind === 'random' ? '随机标记 ' + editorTileLabel(brush.value)
+        : brush.kind === 'tile' ? editorTileLabel(brush.value) : brush.des || brush.label;
+      button.type = 'button';
+      button.className = 'unity-tool';
+      button.dataset.paletteKey = brush.kind + ':' + brush.value;
+      button.setAttribute('aria-pressed', String(activeTowerMove === null && matchesBrush));
+      button.setAttribute('aria-label', shortcut ? name + '，快捷键 ' + shortcut : name);
+      button.title = button.getAttribute('aria-label')!;
+      if (brush.kind === 'tile' || brush.kind === 'random') {
+        const count = document.createElement('span');
+        count.className = 'unity-tool-count';
+        showPaletteCount(count, counts.get(brush.value) ?? 0);
+        button.append(count);
+      }
+
+      const face = document.createElement('span');
+      face.className = 'unity-tool-face';
+      const faceLabel = brush.kind === 'random'
+        ? brush.label + (brush.value === -10 || brush.value === -11 ? '?' : '')
+        : name;
+      const tileIcon = brush.kind === 'tile' ? iconOf(brush.value) : undefined;
+      const asset = brush.kind === 'erase' ? '/assets/unity/Editor_Delete.png'
+        : brush.kind === 'tower' ? '/assets/unity/Direction' + brush.value + '.png'
+        : brush.iconSrc || (tileIcon ? ICON_BASE + encodeURIComponent(tileIcon) + '.png' : '');
+      if (asset) {
+        const image = document.createElement('img');
+        image.alt = '';
+        image.src = asset;
+        image.addEventListener('error', () => { face.textContent = faceLabel; });
+        face.append(image);
+      } else {
+        face.textContent = faceLabel;
+        if (brush.value === -10) face.classList.add('random-a');
+        if (brush.value === -11) face.classList.add('random-b');
+      }
+      button.append(face);
+
+      if (shortcut) {
+        const key = document.createElement('kbd');
+        button.dataset.paletteShortcut = shortcut;
+        key.textContent = shortcut.startsWith('Arrow') ? ['↑', '←', '↓', '→'][brush.value] : shortcut;
+        button.append(key);
+      }
+      button.addEventListener('click', () => {
+        if (fillPreview) return;
+        activeTowerMove = null;
+        st.brush = brush;
+        if (st.selectMode && st.selection.size && (brush.kind === 'tile' || brush.kind === 'random')) {
+          replaceSelected(brush.value);
+        }
+        updateUnityPalette();
+        coverCursor(false);
+      });
+      grid.append(button);
+    }
+    if (expandButton) {
+      const toggle = expandButton;
+      grid.id = 'normal-palette';
+      const syncExpanded = () => {
+        toggle.textContent = normalPaletteExpanded ? '收起' : '展开';
+        toggle.setAttribute('aria-expanded', String(normalPaletteExpanded));
+        [...grid.children].forEach((button, index) => {
+          (button as HTMLElement).hidden = !normalPaletteExpanded && index >= 8;
+        });
+      };
+      toggle.addEventListener('click', () => {
+        normalPaletteExpanded = !normalPaletteExpanded;
+        syncExpanded();
+      });
+      syncExpanded();
+    }
+    return grid;
+  }
+
+  const brushes = (key: string) => palette.find(category => category.key === key)?.brushes ?? [];
+  const basic = addSection('基础', [ERASER, ...brushes('tower'), ...brushes('random')])!;
+  TOWER_MOVE_TOOLS.forEach((tool, direction) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'unity-tool';
+    button.dataset.paletteKey = 'move:' + direction;
+    button.dataset.paletteShortcut = tool.key;
+    button.setAttribute('aria-pressed', String(activeTowerMove === direction));
+    button.setAttribute('aria-label', tool.label + '，快捷键 ' + tool.key);
+    button.title = button.getAttribute('aria-label')!;
+    const face = document.createElement('span');
+    face.className = 'unity-tool-face';
+    const image = document.createElement('img');
+    image.alt = '';
+    image.src = '/assets/unity/Direction' + direction + '.png';
+    face.append(image);
+    const key = document.createElement('kbd');
+    key.textContent = tool.key;
+    button.append(face, key);
+    button.addEventListener('click', () => {
+      if (fillPreview) return;
+      activeTowerMove = direction;
+      updateUnityPalette();
+      coverCursor(false);
+    });
+    basic.append(button);
+  });
+  addSection('普通牌', brushes('normal'), true);
+  addSection('附加效果', brushes('debuff'));
+  addSection('功能牌', [...brushes('func'), COIN_BLOCKER]);
+  if (focused) {
+    [...paletteRoot.querySelectorAll<HTMLButtonElement>('button')]
+      .find(button => button.dataset.paletteKey === focused)?.focus({ preventScroll: true });
+  }
+}
+
+function updateUnityPalette() {
+  const selectedKey = activeTowerMove === null ? st.brush.kind + ':' + st.brush.value : 'move:' + activeTowerMove;
+  const counts = new Map<number, number>();
+  for (const tile of st.master.tiles) {
+    counts.set(tile.tileId, (counts.get(tile.tileId) ?? 0) + 1);
+  }
+  for (const button of $$('[data-palette-key]')) {
+    const tool = button as HTMLButtonElement;
+    tool.setAttribute('aria-pressed', String(tool.dataset.paletteKey === selectedKey));
+    const count = tool.querySelector('.unity-tool-count');
+    if (count) showPaletteCount(count, counts.get(Number(tool.dataset.paletteKey?.split(':')[1])) ?? 0);
+  }
+}
+
+function displayedMaxZ(): number {
+  return fillPreview?.maxZ ?? (st.showMode === 'all' ? 0 : st.showZ + 1);
+}
+
+function maxEditableZ(): number {
+  const tiles = fillPreview?.board.tiles ?? st.master.tiles;
+  return tiles.reduce((maximum, tile) => Math.max(maximum, tile.z + 1), 2);
+}
+
+function setMaxZ(value: number) {
+  const layer = Math.max(0, Math.min(maxEditableZ(), value));
+  if (fillPreview) fillPreview.maxZ = layer;
+  else {
+    st.showMode = layer ? 'multi' : 'all';
+    st.showZ = Math.max(0, layer - 1);
+  }
+  drawEdit();
+}
+
+function renderTemplateStatistics(master: Master) {
+  // Match Unity's editor statistics: normal IDs and the A–N random markers.
+  const towerPositions = new Set(master.towers.map(tower => tower.x + ',' + tower.y));
+  const inTower = (tile: EdTile) => towerPositions.has(tile.x + ',' + tile.y);
+  const normal = master.tiles.filter(tile => (tile.tileId >= 1000 && tile.tileId <= 9999)
+    || (tile.tileId >= -23 && tile.tileId <= -10));
+  const ratio = (value: number, total: number) => total ? value / total : 0;
+  const averagePerLayer = (tiles: EdTile[]) => ratio(tiles.length, new Set(tiles.map(tile => tile.z)).size);
+  const number = (value: number) => value.toFixed(2);
+  const ordinary = normal.filter(tile => !inTower(tile));
+  const averageOrdinary = Number(number(averagePerLayer(ordinary)));
+  const averageSurface = averageOrdinary + master.towers.length;
+  // Unity uses this same formula in both the A and B columns.
+  const initialCount = Math.trunc(averageSurface / 1.5);
+  const group = (id: number) => {
+    const tiles = normal.filter(tile => tile.tileId === id);
+    const outside = tiles.filter(tile => !inTower(tile));
+    return [
+      ['总数', tiles.length],
+      ['占比', number(ratio(tiles.length, normal.length))],
+      ['塔 Tile 占比', number(ratio(tiles.length - outside.length, tiles.length))],
+      ['平均非塔表面数', number(averagePerLayer(outside))],
+      ['初始 Tile 数', initialCount],
+    ];
+  };
+  const stats = [
+    { title: '总模板', items: [
+      ['Tile 总数', normal.length],
+      ['塔 Tile 数占比', number(ratio(normal.length - ordinary.length, normal.length))],
+      ['平均非塔表面数', number(averageOrdinary)],
+      ['平均表面数', number(averageSurface)],
+    ] },
+    { title: 'A 牌', items: group(-10) },
+    { title: 'B 牌', items: group(-11) },
+  ];
+  const target = $('[data-template-stat-groups]')!;
+  target.replaceChildren(...stats.map(({ title, items }) => {
+    const section = document.createElement('section');
+    const heading = document.createElement('h4');
+    heading.textContent = title;
+    const list = document.createElement('dl');
+    for (const [label, value] of items) {
+      const row = document.createElement('div');
+      const labelEl = document.createElement('dt');
+      const valueEl = document.createElement('dd');
+      labelEl.textContent = String(label);
+      valueEl.textContent = String(value);
+      row.append(labelEl, valueEl);
+      list.append(row);
+    }
+    section.append(heading, list);
+    return section;
+  }));
+
+  const layers = new Map<number, number>();
+  for (const tile of master.tiles) {
+    if (!inTower(tile)) layers.set(tile.z + 1, (layers.get(tile.z + 1) ?? 0) + 1);
+  }
+  const layerList = $('[data-template-layer-counts]')!;
+  layerList.replaceChildren(...(layers.size ? [...layers].sort(([a], [b]) => a - b).map(([layer, count]) => {
+    const item = document.createElement('li');
+    item.textContent = layer + ' → ' + count;
+    item.setAttribute('aria-label', '第 ' + layer + ' 层 ' + count + ' 张');
+    return item;
+  }) : [Object.assign(document.createElement('li'), { textContent: '暂无牌' })]));
+}
+
+/** Fit the actual playable footprints, including the offset of each tower tile. */
+function fitPlayableBoard(master: Master, width: number, height: number): ViewXf {
+  if (!master.tiles.length) return fitView(master, width, height);
+  const unit = { s: 1, ox: 0, oy: 0 };
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+  for (const tile of master.tiles) {
+    const offset = towerOffset(master.towers, tile);
+    const rect = playRectOf(unit, tile, offset.ox, offset.oy);
+    left = Math.min(left, rect.x);
+    top = Math.min(top, rect.y);
+    right = Math.max(right, rect.x + rect.w);
+    bottom = Math.max(bottom, rect.y + rect.h);
+  }
+  const scale = Math.max(1, Math.min(144, (width - 40) / (right - left), (height - 52) / (bottom - top)));
+  return { s: scale, ox: width / 2 - (left + right) * scale / 2, oy: (height + 18) / 2 - (top + bottom) * scale / 2 };
+}
+
+let simulationGeneration = 0;
+function resetSimulation() {
+  simulationGeneration++;
+  const result = $('[data-simout]')!;
+  result.textContent = '';
+  ($('[data-sim]') as HTMLButtonElement).disabled = false;
+}
+
+async function runClearSimulation() {
+  const output = $('[data-simout]')!;
+  const button = $('[data-sim]') as HTMLButtonElement;
+  const input = $('[data-sim-runs]') as HTMLInputElement;
+  const runs = Number(input.value);
+  if (!Number.isInteger(runs) || runs < 1 || runs > 500) {
+    output.textContent = '模拟局数请输入 1–500。';
+    input.focus();
+    return;
+  }
+  const master = derivePlayMaster();
+  if (!master.tiles.length) { output.textContent = '请先载入可试玩的模板。'; return; }
+  const structures = sortTilesForSave(st.master.tiles);
+  const board = prepareSimulation(master.tiles.map((tile, index) => ({
+    ...tile, structure: (structures[index]?.tileId ?? 0) <= -12,
+  })));
+  const generation = ++simulationGeneration;
+  const seed = curDup().seed | 0;
+  const capacity = st.tray;
+  const signature = playSig(master, capacity);
+  button.disabled = true;
+  const rows = [];
+  try {
+    for (const [strategy, label] of Object.entries(strategyLabels)) {
+      const trials = strategy === 'random' ? runs : 1;
+      const results = [];
+      for (let n = 0; n < trials; n++) {
+        if (n % 10 === 0) {
+          output.textContent = '正在推演 ' + label + '（' + n + '/' + trials + '）';
+          await new Promise(resolve => setTimeout(resolve, 0));
+          if (generation !== simulationGeneration) return;
+        }
+        results.push(simulateClear(board, capacity, strategy, makeRng(seed + n * 2654435761 + 1001)));
+      }
+      rows.push({ strategy, label, trials, ...summarizeRuns(results) });
+    }
+    if (signature !== playSig(derivePlayMaster(), st.tray)) {
+      output.textContent = '试玩参数已变化，请重新运行推演。';
+      return;
+    }
+    output.textContent = '';
+    const caption = document.createElement('p');
+    caption.textContent = '副本 ' + (st.slot + 1) + ' · 背包 ' + capacity + ' 格 · 同一开局牌面';
+    const table = document.createElement('table');
+    table.className = 'simulation-results';
+    table.innerHTML = '<thead><tr><th>策略</th><th>结果</th><th>背包峰值</th><th>点击</th></tr></thead>';
+    const body = table.createTBody();
+    for (const row of rows) {
+      const cells = body.insertRow();
+      const result = row.strategy === 'random'
+        ? (row.rate * 100).toFixed(1) + '%（' + row.wins + '/' + row.trials + '）'
+        : row.wins ? '通关' : '失败';
+      for (const value of [row.label, result, row.peak, row.averageClicks.toFixed(row.trials > 1 ? 1 : 0)]) {
+        cells.insertCell().textContent = String(value);
+      }
+      if (row.firstFailure) cells.title = '示例失败：第 ' + row.firstFailure.clicks + ' 步，' + row.firstFailure.reason;
+    }
+    output.append(caption, table);
+  } catch (error) {
+    output.textContent = '推演失败：' + (error as Error).message;
+  } finally {
+    if (generation === simulationGeneration) button.disabled = false;
+  }
+}
+
+function setPlayMode(play: boolean, restart = true) {
+    if (fillPreview) return;
+    if(play && !st.master.tiles.length) { localStatus('请先载入模板或摆牌，再一键试玩。',true); return; }
+    if (play && restart) playSession = null;
+    resetSimulation();
+    ($('[data-editpanel]') as HTMLElement).hidden = play;
+    ($('.playpanel') as HTMLElement).hidden = !play;
+    const playButton = $('[data-mode-play]')!;
+    playButton.textContent = play ? '返回编辑' : '一键试玩';
+    playButton.setAttribute('aria-pressed', String(play));
+    $('[data-status-home="'+(play ? 'play' : 'edit')+'"]')!.append($('[data-localstatus]')!);
+    updateBatchNavigation();
+    requestAnimationFrame(()=>{ (play?$('[data-pfit]'):$('[data-fit]'))!.dispatchEvent(new Event('click')); draw(); renderRightPanels(); if (!play && batchPhase === 'edit') showActiveBatchCard(); });
+  }
+
+
+type EditorContext = ReturnType<typeof captureEditor>;
+type BatchEntry = {
+  master: Master; raw: Uint8Array; label: string; context?: EditorContext;
+  card?: HTMLElement; placeholder?: HTMLElement; mount?: HTMLElement;
+};
+let batchPhase: 'single' | 'import' | 'edit' = 'single';
+let batchEntries: BatchEntry[] = [];
+let batchActive = -1;
+let singleContext: EditorContext | null = null;
+let batchMethod = 'ids';
+let batchFiles: File[] = [];
+let batchLoading = false;
+let batchFailures: string[] = [];
+
+function captureEditor() {
+  const status = $('[data-localstatus]')!;
+  return {
+    state: { ...st, dup: st.dup.slice(), selection: new Set(st.selection), editView: { ...st.editView }, playView: { ...st.playView } },
+    key: sourceKey, raw: sourceRaw, original: initialBoard, history, signature: savedSignature || initialSignature,
+    initialSignature, savedSignature, savedName, translateX, translateY, playSession, currentLevelId,
+    groupRules, iapCut, issueSpot,
+    id: ($('[data-tplid]') as HTMLInputElement).value,
+    label: $('[data-fn]')!.textContent || '',
+    status: status.textContent || '', error: status.classList.contains('is-error'),
+  };
+}
+
+function restoreEditor(ctx: EditorContext) {
+  Object.assign(st, ctx.state);
+  st.dup = ctx.state.dup.slice();
+  st.selection = new Set(ctx.state.selection);
+  st.editView = { ...ctx.state.editView };
+  st.playView = { ...ctx.state.playView };
+  sourceKey = ctx.key;
+  sourceRaw = ctx.raw;
+  sourceSerial++;
+  history = ctx.history;
+  initialBoard = ctx.original;
+  initialSignature = ctx.initialSignature;
+  savedSignature = ctx.savedSignature;
+  savedName = ctx.savedName;
+  translateX = ctx.translateX;
+  translateY = ctx.translateY;
+  playSession = ctx.playSession;
+  currentLevelId = ctx.currentLevelId;
+  groupRules = ctx.groupRules;
+  iapCut = ctx.iapCut;
+  issueSpot = ctx.issueSpot;
+  endFillPreview();
+  ($('[data-seed-mode]') as HTMLSelectElement).value = groupRules ? 'group' : 'unity';
+  ($('[data-iap-cut]') as HTMLInputElement).value = String(iapCut);
+  ($('[data-levelnum]') as HTMLInputElement).value = String(st.levelNum);
+  ($('[data-tray]') as HTMLInputElement).value = String(st.tray);
+  const id = $('[data-tplid]') as HTMLInputElement;
+  id.value = ctx.id;
+  id.removeAttribute('aria-invalid');
+  setFn(ctx.label);
+  localStatus(ctx.status, ctx.error);
+  renderSelMode();
+  renderAll();
+}
+
+function batchStatus(entry: BatchEntry) {
+  if (!entry.context) return entry.master.tiles.length + ' 张';
+  const ctx = entry.context;
+  return ctx.signature !== JSON.stringify(ctx.state.master) ? '有未另存修改'
+    : ctx.savedSignature ? '已另存' : ctx.state.master.tiles.length + ' 张';
+}
+
+function renderBatchCard(entry: BatchEntry, index: number) {
+  const selected = index === batchActive;
+  entry.card!.classList.toggle('is-active', selected);
+  entry.card!.querySelector('[data-batch-card-state]')!.textContent = batchStatus(entry);
+  entry.card!.querySelector('[data-batch-select]')!.setAttribute('aria-pressed', String(selected));
+  entry.placeholder!.hidden = selected;
+  if (!selected) {
+    const ctx = entry.context;
+    const max = ctx && ctx.state.showMode !== 'all' ? ctx.state.showZ + 1 : 0;
+    entry.placeholder!.innerHTML = coverMarkup(ctx?.state.master ?? entry.master, max);
+  }
+}
+
+function selectBatch(index: number, startPlay = false) {
+  if (fillPreview || busy || !batchEntries[index]) return;
+  const entry = batchEntries[index];
+  if (batchActive !== index) {
+    const previous = batchActive;
+    if (previous >= 0) batchEntries[previous].context = captureEditor();
+    batchActive = index;
+    entry.mount!.append($('[data-editor-frame]')!);
+    if (previous >= 0) renderBatchCard(batchEntries[previous], previous);
+    if (entry.context) restoreEditor(entry.context);
+    else {
+      const cfg = drawerConfig;
+      const rowIndex = cfg ? findRow(cfg, entry.master.templateId) : -1;
+      const row = cfg && rowIndex >= 0 ? cfg.rows[rowIndex] : null;
+      history = new History<Master>(200);
+      st.master = entry.master;
+      st.dup = row ? row.dup.slice() : curveDefault();
+      st.strategyGroupId = row?.strategyGroupId ?? '';
+      st.randomSeedGroupId = row?.randomSeedGroupId ?? '';
+      st.slot = st.currentZ = st.showZ = 0;
+      st.showMode = 'all';
+      st.selectMode = false;
+      st.selection.clear();
+      issueSpot = '';
+      playSession = null;
+      currentLevelId = entry.master.templateId;
+      setFn(entry.label);
+      adoptSource('', entry.raw);
+      renderSelMode();
+      renderAll();
+    }
+    if (!($('.playpanel') as HTMLElement).hidden) {
+      resetSimulation();
+      ($('[data-pfit]') as HTMLButtonElement).click();
+    }
+    renderBatchCard(entry, index);
+  }
+  if (startPlay) setPlayMode(true);
+  updateBatchNavigation();
+}
+
+function showActiveBatchCard() {
+  const card = batchEntries[batchActive]?.card;
+  if (card) card.scrollIntoView({ block: 'start', inline: 'nearest' });
+}
+
+function updateBatchNavigation() {
+  const nav = $('[data-batch-navigation]') as HTMLElement;
+  nav.hidden = batchPhase !== 'edit' || batchActive < 0;
+  if (nav.hidden) return;
+  ($('[data-batch-prev]') as HTMLButtonElement).disabled = batchActive === 0;
+  ($('[data-batch-next]') as HTMLButtonElement).disabled = batchActive >= batchEntries.length - 1;
+  $('[data-batch-play-id]')!.textContent = (st.master.templateId || batchEntries[batchActive].label)
+    + ' · ' + (batchActive + 1) + '/' + batchEntries.length;
+}
+
+function batchScreen(phase: 'single' | 'import' | 'edit') {
+  batchPhase = phase;
+  document.body.dataset.batchPhase = phase;
+  ($('[data-batch-import]') as HTMLElement).hidden = phase !== 'import';
+  ($('[data-editgrid]') as HTMLElement).hidden = phase === 'import';
+  ($('[data-batch-cards]') as HTMLElement).hidden = phase !== 'edit';
+  $('[data-batch-open]')!.textContent = phase === 'single' ? '批量修改模板' : '返回单模板';
+  ($('[data-batch-resume]') as HTMLElement).hidden = batchEntries.length === 0;
+  updateBatchNavigation();
+}
+
+function buildBatchCards() {
+  const list = $('[data-batch-cards]')!;
+  list.replaceChildren();
+  if (batchFailures.length) {
+    const issues = document.createElement('details');
+    issues.className = 'batch-import-issues';
+    const summary = document.createElement('summary');
+    summary.textContent = batchFailures.length + ' 项读取失败';
+    issues.append(summary, ...batchFailures.map(failure => {
+      const item = document.createElement('p'); item.textContent = failure; return item;
+    }));
+    list.append(issues);
+  }
+  batchEntries.forEach((entry, index) => {
+    const card = document.createElement('article');
+    card.className = 'batch-card';
+    card.innerHTML = '<header><div><h3></h3><span data-batch-card-state></span></div><button type="button" class="chip" data-batch-select aria-pressed="false">编辑</button><button class="chip act" type="button" data-batch-play>试玩</button></header><div class="batch-board-mount"><div class="cc-board batch-board-placeholder"></div></div>';
+    card.querySelector('h3')!.textContent = entry.master.templateId || entry.label;
+    const placeholder = card.querySelector<HTMLElement>('.batch-board-placeholder')!;
+    entry.card = card;
+    entry.placeholder = placeholder;
+    entry.mount = card.querySelector<HTMLElement>('.batch-board-mount')!;
+    card.querySelector('[data-batch-select]')!.addEventListener('click', () => selectBatch(index));
+    card.querySelector('[data-batch-play]')!.addEventListener('click', () => selectBatch(index, true));
+    placeholder.addEventListener('pointerdown', event => {
+      if (event.button !== 0 && event.button !== 2 || busy) return;
+      const tile = (event.target as HTMLElement).closest<HTMLElement>('[data-board-index]');
+      selectBatch(index);
+      const board = $('[data-cover-board]')!;
+      const target = tile
+        ? [...board.querySelectorAll<HTMLElement>('[data-board-index]')].find(el => el.dataset.boardIndex === tile.dataset.boardIndex)
+        : board;
+      (target ?? board).dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, cancelable: true, button: event.button, buttons: event.buttons,
+        clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId,
+      }));
+    });
+    placeholder.addEventListener('contextmenu', event => event.preventDefault());
+    list.append(card);
+    renderBatchCard(entry, index);
+  });
+}
+
+async function importBatch() {
+  if (batchLoading) return;
+  const ids = [...new Set(($('[data-batch-input="ids"] textarea') as HTMLTextAreaElement).value.split(/[\s,，;；]+/).filter(Boolean))];
+  const inputs = batchMethod === 'ids' ? ids : batchFiles;
+  const feedback = $('[data-batch-feedback]')!;
+  const errors = $('[data-batch-errors]')!;
+  errors.replaceChildren();
+  if (!inputs.length) { feedback.textContent = '请先输入模板 ID 或选择文件。'; return; }
+  if (batchEntries.some(entry => entry.context && entry.context.signature !== JSON.stringify(entry.context.state.master))
+      && !confirm('上一个批次有未另存的修改，确定导入新的批次？')) return;
+  batchLoading = true;
+  ($('[data-batch-submit]') as HTMLButtonElement).disabled = true;
+  ($('[data-batch-open]') as HTMLButtonElement).disabled = true;
+  ($('[data-batch-resume]') as HTMLButtonElement).disabled = true;
+  const loaded: BatchEntry[] = [];
+  const failures: string[] = [];
+  try {
+    await ensureLevelDataLoaded().catch(() => {});
+    for (const input of inputs) {
+      let label = typeof input === 'string' ? input : input.name;
+      feedback.textContent = '正在读取 ' + (loaded.length + failures.length + 1) + '/' + inputs.length + ' · ' + label;
+      try {
+        let raw: Uint8Array;
+        if (typeof input === 'string') {
+          const response = await fetch(TEMPLATE_URL(input.replace(/_m\.bytes$/i, '')) + '?preview=1');
+          if (!response.ok) throw new Error((await response.json()).error || '仓库未找到模板');
+          raw = new Uint8Array(await response.arrayBuffer());
+          label = input.replace(/_m\.bytes$/i, '') + '_m.bytes';
+        } else {
+          raw = new Uint8Array(await input.arrayBuffer());
+          await writeLocal('/api/upload?preview=1', raw);
+        }
+        loaded.push({ master: fromSave(decodeLevelSave(raw)), raw, label });
+      } catch (error) {
+        failures.push(label + '：' + (error as Error).message);
+      }
+    }
+    if (!loaded.length) {
+      feedback.textContent = '没有读到可编辑的模板。';
+      for (const failure of failures) {
+        const line = document.createElement('li'); line.textContent = failure; errors.append(line);
+      }
+      return;
+    }
+    batchActive = -1;
+    batchEntries = loaded;
+    batchFailures = failures;
+    buildBatchCards();
+    batchScreen('edit');
+    selectBatch(0);
+    localStatus('已读取 ' + loaded.length + ' 张模板' + (failures.length ? '，' + failures.length + ' 项失败。' : '。'));
+  } finally {
+    batchLoading = false;
+    ($('[data-batch-submit]') as HTMLButtonElement).disabled = false;
+    ($('[data-batch-open]') as HTMLButtonElement).disabled = false;
+    ($('[data-batch-resume]') as HTMLButtonElement).disabled = false;
+  }
+}
+
+function bindBatch() {
+  const button = $('[data-batch-open]')!;
+  const frame = $('[data-editor-frame]')!;
+  const singleParent = frame.parentElement!;
+  button.addEventListener('click', () => {
+    if (busy || batchLoading || pendingUpload) return;
+    ++readRequest;
+    if (batchPhase === 'single') {
+      singleContext = captureEditor();
+      setPlayMode(false);
+      batchScreen('import');
+      ($('#batch-ids') as HTMLTextAreaElement).focus();
+      return;
+    }
+    if (batchPhase === 'edit' && batchActive >= 0) batchEntries[batchActive].context = captureEditor();
+    singleParent.append(frame);
+    if (batchActive >= 0) {
+      const prior = batchActive;
+      batchActive = -1;
+      renderBatchCard(batchEntries[prior], prior);
+    }
+    batchScreen('single');
+    setPlayMode(false);
+    if (singleContext) restoreEditor(singleContext);
+  });
+
+  $('[data-batch-resume]')!.addEventListener('click', () => {
+    batchScreen('edit');
+    selectBatch(0);
+  });
+  $('[data-batch-form]')!.addEventListener('submit', event => { event.preventDefault(); void importBatch(); });
+  $('[data-batch-prev]')!.addEventListener('click', () => selectBatch(batchActive - 1));
+  $('[data-batch-next]')!.addEventListener('click', () => selectBatch(batchActive + 1));
+  const fileInput = $('#batch-files') as HTMLInputElement;
+  const drop = $('.batch-drop')!;
+  const replaceFiles = (files: FileList | null) => {
+    batchFiles = Array.from(files ?? []);
+    $('[data-batch-file-count]')!.textContent = batchFiles.length
+      ? batchFiles.map(file => file.name).join('、')
+      : '支持 .bytes';
+  };
+  fileInput.addEventListener('change', () => replaceFiles(fileInput.files));
+  drop.addEventListener('dragover', event => event.preventDefault());
+  drop.addEventListener('drop', event => {
+    event.preventDefault();
+    replaceFiles((event as DragEvent).dataTransfer?.files ?? null);
+  });
+  for (const item of $$('[data-batch-method]')) {
+    item.addEventListener('click', () => {
+      batchMethod = (item as HTMLElement).dataset.batchMethod!;
+      for (const tab of $$('[data-batch-method]')) tab.setAttribute('aria-pressed', String(tab === item));
+      for (const panel of $$('[data-batch-input]')) (panel as HTMLElement).hidden = (panel as HTMLElement).dataset.batchInput !== batchMethod;
+    });
+  }
+}
+
+function bindManual() {
+  const dialog = $('[data-help-dialog]') as HTMLDialogElement;
+  const search = $('[data-manual-search]') as HTMLInputElement;
+  const content = $('[data-manual-content]') as HTMLElement;
+  const sections = [...content.querySelectorAll<HTMLElement>('section')];
+  const links = [...dialog.querySelectorAll<HTMLAnchorElement>('nav a')];
+  function choose(section: HTMLElement) {
+    $('[data-manual-current]')!.textContent = section.querySelector('h3')!.textContent;
+    for (const link of links) {
+      if (link.hash === '#' + section.id) link.setAttribute('aria-current', 'location');
+      else link.removeAttribute('aria-current');
+    }
+    content.scrollTop = section.offsetTop;
+  }
+  function filter() {
+    const terms = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    for (const section of sections) section.hidden = terms.some(term => !section.textContent!.toLowerCase().includes(term));
+    const matches = sections.filter(section => !section.hidden);
+    ($('[data-manual-empty]') as HTMLElement).hidden = matches.length > 0;
+    if (terms.length && matches.length) choose(matches[0]);
+    else if (!matches.length) {
+      $('[data-manual-current]')!.textContent = '无匹配章节';
+      links.forEach(link => link.removeAttribute('aria-current'));
+    }
+    content.scrollTop = 0;
+  }
+  search.addEventListener('input', filter);
+  links.forEach(link => link.addEventListener('click', event => {
+    event.preventDefault();
+    search.value = '';
+    filter();
+    choose(sections.find(section => '#' + section.id === link.hash)!);
+  }));
+  $('[data-help]')!.addEventListener('click', () => {
+    search.value = '';
+    filter();
+    dialog.showModal();
+    const topic = !($('.playpanel') as HTMLElement).hidden ? 'manual-play' : batchPhase !== 'single' ? 'manual-batch' : 'manual-start';
+    choose(sections.find(section => section.id === topic)!);
+  });
+}

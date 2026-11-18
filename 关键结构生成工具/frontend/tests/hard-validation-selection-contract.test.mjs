@@ -71,8 +71,7 @@ test("all non-proved rule outcomes remain manually exportable", () => {
   assert.equal(inconclusive.autoEligible, false);
   assert.equal(inconclusive.manualOverrideRequired, true);
   assert.equal(inconclusive.status, "inconclusive");
-  assert.match(inconclusive.label, /非推荐/);
-  assert.match(inconclusive.label, /需人工确认/);
+  assert.match(inconclusive.label, /证据不足/);
   assert.equal(disproved.eligible, true);
   assert.equal(disproved.autoEligible, false);
   assert.equal(disproved.manualOverrideRequired, true);
@@ -100,20 +99,14 @@ test("synthetic difficulty evidence is not recommended but remains manually expo
   assert.equal(eligibility.autoEligible, false);
   assert.equal(eligibility.manualOverrideRequired, true);
   assert.equal(eligibility.status, "inconclusive");
-  assert.match(eligibility.reason, /人工确认/);
+  assert.match(eligibility.reason, /简化模拟/);
 });
 
-test("selection, confirmation, stale-state cleanup, and launch paths preserve user choice", () => {
+test("selection and launch paths preserve user choice", () => {
   assert.match(app, /availableByWork[\s\S]*filter\(\(candidate\) => candidateExportEligibility\(candidate\)\.eligible\)/);
   assert.match(app, /state\.selectedCandidates\.set\(key, validIds\)/);
   assert.doesNotMatch(app, /candidate-export-blocked[\s\S]*disabled/);
   assert.match(app, /if \(!selected && !exportEligibility\.eligible\)/);
-  assert.match(app, /let count = 0; let manualCount = 0/);
-  assert.match(app, /launch\.disabled = count === 0 \|\| Boolean\(locked\)/);
-  assert.match(app, /const staleSelections = \[\]/);
-  assert.match(app, /候选已不存在或生成记录已失效，已清除陈旧选择/);
-  assert.match(app, /manual_evidence_override: eligibility\.manualOverrideRequired/);
-  assert.match(app, /确认导出[\s\S]*非推荐候选/);
-  assert.match(app, /结构规则未通过、未达难度目标或动态依据不足/);
-  assert.match(app, />选择并导出<\/button>/);
+  assert.match(app, /部分所选候选暂时无法复验[^\n]*原勾选已保留/);
+  assert.match(app, />加入本次导出<\/button>/);
 });

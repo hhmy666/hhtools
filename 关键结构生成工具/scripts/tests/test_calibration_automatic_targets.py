@@ -32,13 +32,38 @@ class AutomaticCalibrationTests(unittest.TestCase):
         self.assertEqual(original.render(), '12|1|100|4')
         self.assertEqual(evidence['replaced_a_type_count'], 5)
 
-    def test_a_and_b_caps_are_separate_and_small_sources_are_never_raised(self):
+    def test_automatic_cap_clamps_to_a_and_b_floors(self):
         original = DupParam(5, '3', 80, 4)
-        upper, lower, _ = _automatic_structure_search_bounds([original], [DupParam(3,'3',80,3)], 2, 1)
-        self.assertEqual(upper[0].render(), '3|3|80|3')
-        self.assertLessEqual(lower[0].a, upper[0].a)
-        with self.assertRaises(InputValidationError):
-            _automatic_structure_search_bounds([original], [original], 6, 0)
+        upper, lower, _ = _automatic_structure_search_bounds([original], [DupParam(3,'3',80,2)], 6, 5)
+        self.assertEqual(upper[0].render(), '4|3|80|3')
+        self.assertEqual(lower[0].render(), '4|3|80|3')
+
+    def test_specified_count_deducts_only_replaced_sides(self):
+        original = DupParam(6, '0', 100, 6)
+        baseline = DupParam(6, '0', 100, 1)
+        for actual_b_count in (5, 6):
+            with self.subTest(actual_b_count=actual_b_count):
+                upper, lower, evidence = _automatic_structure_search_bounds(
+                    [original] * 2, [baseline] * 2, 0, actual_b_count,
+                    specified_count=2,
+                )
+                self.assertEqual(upper[0].render(), '6|0|100|4')
+                self.assertEqual(lower[0].render(), '6|0|100|3')
+                self.assertEqual(upper[1], original)
+                self.assertEqual(evidence['a_deduction_count'], 0)
+                self.assertEqual(evidence['b_deduction_count'], 2)
+                self.assertEqual(evidence['replaced_b_type_count'], actual_b_count)
+
+        upper, lower, _ = _automatic_structure_search_bounds(
+            [original], [DupParam(1, '0', 100, 0)], 5, 6, specified_count=5,
+        )
+        self.assertEqual(upper[0], DupParam(4, '0', 100, 3))
+        self.assertEqual(lower[0], upper[0])
+        no_b = DupParam(6, '0', 100, 0)
+        upper, _, _ = _automatic_structure_search_bounds(
+            [no_b], [no_b], 5, 0, specified_count=2,
+        )
+        self.assertEqual(upper[0], DupParam(4, '0', 100, 0))
 
     def test_online_increases_are_flattened_and_raw_data_remains_unchanged(self):
         values = [2000, 1800, 1500, 1142.5, 1521.69, 1400, 1000, None, 1200, 1100]

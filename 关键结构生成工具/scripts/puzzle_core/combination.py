@@ -61,7 +61,7 @@ class CombinationUnitProof:
 
 @dataclass(frozen=True)
 class OrderedCapacityProof:
-    """Exact proof for completing whole units in one configured order."""
+    """Capacity conclusion for whole units in one configured order."""
 
     capacity: int
     unit_order: Tuple[str, ...]
@@ -76,6 +76,7 @@ class OrderedCapacityProof:
     settled_peak: int
     recommended_order: Tuple[Tuple[str, int], ...] | None
     shortest_failure_order: Tuple[Tuple[str, int], ...] | None
+    witness_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -111,7 +112,11 @@ class CombinationProof:
     singleton_rule_scope: str
 
     def as_dict(self) -> dict[str, object]:
-        return asdict(self)
+        result = asdict(self)
+        for data, unit in zip(result["unit_proofs"], self.unit_proofs):
+            if unit.puzzle_proof.earliest_gate_click is None:
+                data["puzzle_proof"].pop("earliest_gate_click")
+        return result
 
 
 def _normalize_layout(value: Layout | str) -> Layout:
@@ -528,6 +533,7 @@ def analyze_combination(
             instantaneous_peak=proof.instantaneous_peak, settled_peak=proof.settled_peak,
             recommended_order=None if proof.recommended_order is None else tuple((unit_id, i) for i in proof.recommended_order),
             shortest_failure_order=None if proof.shortest_failure_order is None else tuple((unit_id, i) for i in proof.shortest_failure_order),
+            witness_only=proof.witness_only,
         ) for proof in unit_results[0].capacity_proofs)
     else:
         ordered_results = tuple(

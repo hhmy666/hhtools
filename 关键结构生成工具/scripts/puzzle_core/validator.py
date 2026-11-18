@@ -991,6 +991,8 @@ def validate_candidate(
                 limits=options.solver_limits,
                 required_pre_gate_recycles=effective_pre_gate_recycles,
                 first_recycle_lead_tiles=unit_options.first_recycle_lead_tiles,
+                allow_capacity_witness=any(item.witness_only for item in unit.proof.capacity_proofs),
+                recycle_order=unit.proof.recommended_order if effective_pre_gate_recycles else None,
             )
         if tuple(unit.blocker_masks) != tuple(masks):
             _fail("unit_blocker_masks", "候选携带的单元遮挡掩码与独立重算不一致")

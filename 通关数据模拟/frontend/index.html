@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
+  <title>通关数据模拟</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-board" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><path d="m14 17 2.5 2.5L21 15"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.3a.6.6 0 0 1 .9-.5l11 6.7a.6.6 0 0 1 0 1l-11 6.7a.6.6 0 0 1-.9-.5z"/></symbol>
+    <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M3 14h18M10 9v11"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6v14M12 6c-2-2-6-2-9-1v14c3-1 7-1 9 1 2-2 6-2 9-1V5c-3-1-7-1-9 1Z"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m-5 5 5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-9"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></symbol>
+  </svg>
+  <header class="topbar">
+    <a class="brand" href="#configuration">
+      <span class="brand-mark"><svg aria-hidden="true"><use href="#i-board"/></svg></span>
+      <span>通关数据模拟</span>
+    </a>
+    <div class="top-actions">
+      <span class="service-status" id="service-status"><span class="dot"></span><span>连接本地服务</span></span>
+      <button class="button button-quiet" id="open-help" type="button"><svg aria-hidden="true"><use href="#i-book"/></svg>使用说明</button>
+    </div>
+  </header>
+  <aside class="sidebar" aria-label="工具导航">
+    <nav>
+      <a class="nav-link is-active" id="nav-configuration" aria-current="location" href="#configuration"><svg aria-hidden="true"><use href="#i-play"/></svg><span>创建模拟</span></a>
+      <a class="nav-link" id="nav-results" href="#results" aria-disabled="true"><svg aria-hidden="true"><use href="#i-table"/></svg><span>模拟结果</span></a>
+    </nav>
+    <button class="nav-link" id="open-repository" type="button"><svg aria-hidden="true"><use href="#i-folder"/></svg><span>模板仓库</span></button>
+  </aside>
+
+  <main class="workspace">
+    <nav class="workflow" aria-label="模拟流程">
+        <ol>
+          <li><a href="#import" aria-current="step"><span class="step-number">1</span><span>导入关卡</span></a></li>
+          <li><a href="#settings"><span class="step-number">2</span><span>设置模拟</span></a></li>
+          <li><a href="#results" aria-disabled="true"><span class="step-number">3</span><span>查看结果</span></a></li>
+        </ol>
+    </nav>
+    <section id="configuration" aria-labelledby="page-title">
+      <div class="page-heading">
+        <h1 id="page-title">创建通关模拟</h1>
+        <p>导入关卡配置或模板，估算各副本的裸胜率与人均消耗。</p>
+      </div>
+
+      <form id="simulation-form" novalidate>
+
+          <section class="panel import-panel" id="import" aria-labelledby="import-title">
+            <div class="panel-heading">
+              <h2 id="import-title">导入关卡</h2>
+              <button class="text-button" id="fill-example" type="button">填入示例</button>
+            </div>
+            <label for="paste">模板 ID 或副本配置</label>
+            <textarea class="resize-none" id="paste" spellcheck="false" autocomplete="off" aria-describedby="paste-hint" placeholder="xkd141&#10;mxd0069&#10;&#10;15|3|100|4&#10;12|2|100|4"></textarea>
+            <p class="hint" id="paste-hint">支持分两段粘贴模板 ID 和参数，按行对应。重复 ID 可模拟多个副本。上传整张配置表后，可粘贴关卡 ID 或模板 ID 以缩小范围。</p>
+            <div class="upload-grid">
+              <label class="upload-target" id="configuration-upload">
+                <svg aria-hidden="true"><use href="#i-upload"/></svg>
+                <span><strong>上传关卡配置</strong><small>CSV、TSV 或纯文本（UTF-8）</small></span>
+                <input type="file" id="config-file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain">
+              </label>
+              <label class="upload-target" id="template-upload">
+                <svg aria-hidden="true"><use href="#i-upload"/></svg>
+                <span><strong>上传模板文件</strong><small>.bytes，可多选</small></span>
+                <input type="file" id="template-files" accept=".bytes" multiple>
+              </label>
+            </div>
+            <ul class="file-list" id="file-list" aria-label="已上传的文件" hidden></ul>
+            <div class="repo-summary">
+              <svg aria-hidden="true"><use href="#i-folder"/></svg>
+              <span id="repository-summary">读取模板仓库设置中…</span>
+              <button class="text-button" id="change-repository" type="button">更改目录</button>
+            </div>
+            <p class="form-error" id="import-error" role="alert" hidden></p>
+            <div class="step-actions"><button class="button button-primary" id="next-settings" type="button">下一步：设置模拟</button></div>
+          </section>
+
+          <section hidden class="panel settings-panel" id="settings" aria-labelledby="settings-title">
+            <div class="panel-heading"><h2 id="settings-title">设置模拟</h2></div>
+            <div class="form-field">
+              <label for="trials">每个副本的模拟局数</label>
+              <div class="unit-field"><input id="trials" type="number" value="1000" min="1000" max="20000" step="1" required aria-describedby="trials-hint"><span aria-hidden="true">局</span></div>
+              <p class="hint" id="trials-hint">每组结果至少采样 1,000 种玩家风格。</p>
+            </div>
+            <fieldset class="target-field">
+              <legend>参数推荐目标</legend>
+              <div class="target-grid">
+                <label class="sr-only" for="target-metric">目标指标</label>
+                <select id="target-metric" aria-describedby="target-hint">
+                  <option value="">不指定目标</option>
+                  <option value="mean_cost">预期人均消耗</option>
+                  <option value="naked_win_rate">预期裸胜率</option>
+                </select>
+                <div id="target-value-group" class="unit-field" hidden>
+                  <label class="sr-only" for="target-value">目标值</label>
+                  <input id="target-value" aria-describedby="target-hint" type="number" inputmode="decimal" min="0" step="any" placeholder="输入目标值">
+                  <span id="target-unit" aria-hidden="true"></span>
+                </div>
+              </div>
+              <p class="hint" id="target-hint">未提供副本参数时，可设定目标来比较并推荐参数。</p>
+            </fieldset>
+            <details class="advanced" id="advanced">
+              <summary>参数范围与种子 <svg aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+              <p class="hint">仅用于缺少副本参数的模板。种子留空时在 0–31 内随机取值。</p>
+              <div class="range-grid">
+                <span></span><span class="range-heading">最小值</span><span class="range-heading">最大值</span>
+                <span>A 单图案组数</span>
+                <input aria-label="A 单图案组数最小值" id="a_min" type="number" min="1" max="100" step="1" value="1" required>
+                <input aria-label="A 单图案组数最大值" id="a_max" type="number" min="1" max="100" step="1" value="4" required>
+                <span>B 单图案组数</span>
+                <input aria-label="B 单图案组数最小值" id="b_min" type="number" min="1" max="100" step="1" value="1" required>
+                <input aria-label="B 单图案组数最大值" id="b_max" type="number" min="1" max="100" step="1" value="4" required>
+                <span>Lucky</span>
+                <input aria-label="Lucky 最小值" id="luck_min" type="number" min="0" max="500" step="1" placeholder="默认">
+                <input aria-label="Lucky 最大值" id="luck_max" type="number" min="0" max="500" step="1" placeholder="默认">
+                <span>随机种子</span>
+                <input aria-label="随机种子最小值" id="seed_min" type="number" min="0" max="31" step="1" placeholder="0">
+                <input aria-label="随机种子最大值" id="seed_max" type="number" min="0" max="31" step="1" placeholder="31">
+              </div>
+            </details>
+            <div class="run-bar">
+              <button class="button button-secondary" id="back-import" type="button">返回导入</button>
+              <div class="model-status" id="model-status">
+                <svg aria-hidden="true"><use href="#i-info"/></svg><span>读取玩家行为模型状态中…</span>
+              </div>
+              <button class="button button-primary" type="submit" id="run-simulation">开始模拟 <svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
+            </div>
+            <p class="form-error" id="form-error" role="alert" hidden></p>
+          </section>
+      </form>
+    </section>
+
+    <section hidden class="panel results-panel" id="results" aria-labelledby="results-title">
+      <div class="panel-heading">
+        <h2 id="results-title" tabindex="-1">模拟结果</h2>
+        <p class="hint" id="results-count"></p>
+        <button class="button button-secondary" id="back-settings" type="button">返回设置</button>
+      </div>
+      <div class="job-status" id="job-status" role="status" hidden>
+        <div class="job-heading">
+          <strong id="progress-label">正在启动模拟</strong>
+          <span id="progress-percent"></span>
+        </div>
+        <progress id="job-progress" max="100" aria-label="模拟进度"></progress>
+        <p class="hint" id="progress-detail"></p>
+        <button class="button button-secondary" id="retry-job" type="button" hidden>继续检查进度</button>
+      </div>
+      <div class="result-notice" id="result-notice" role="status" hidden></div>
+      <div class="results-empty" id="results-empty">
+        <svg aria-hidden="true"><use href="#i-table"/></svg>
+        <p>模拟完成后，在这里按模板和副本查看结果。</p>
+      </div>
+      <div class="table-scroll" id="results-table-wrap" role="region" aria-label="副本模拟结果表，可横向滚动" tabindex="0" hidden>
+        <table id="results-table">
+          <thead>
+            <tr>
+              <th scope="col">模板 ID</th>
+              <th scope="col">副本</th>
+              <th scope="col">参数</th>
+              <th scope="col" class="numeric">人均消耗</th>
+              <th scope="col" class="numeric">裸胜率</th>
+              <th scope="col" class="numeric">平均关卡时长（分钟）</th>
+              <th scope="col" class="numeric">失败 FUUU</th>
+              <th scope="col" class="numeric">失败无解进度</th>
+              <th scope="col" class="numeric">胜利 FUUU</th>
+              <th scope="col" class="numeric">高压次数</th>
+              <th scope="col" class="numeric">模拟局数</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="repository-dialog" aria-labelledby="repository-title">
+    <form id="repository-form" novalidate>
+      <div class="modal-heading">
+        <h2 id="repository-title">模板仓库</h2>
+        <button class="button button-quiet icon-button" id="close-repository" type="button" aria-label="关闭模板仓库设置"><svg aria-hidden="true"><use href="#i-close"/></svg></button>
+      </div>
+      <p class="hint">用模板 ID 查找本地 .bytes 文件。上传的模板文件可直接使用。</p>
+      <fieldset class="repo-mode-select">
+        <legend class="sr-only">目录输入方式</legend>
+        <label><input type="radio" name="repo-mode" value="choose" checked> 选择模板目录</label>
+        <label><input type="radio" name="repo-mode" value="manual"> 手动输入路径</label>
+      </fieldset>
+      <div class="directory-field">
+        <label class="sr-only" for="repository">模板仓库路径</label>
+        <input id="repository" type="text" spellcheck="false" autocomplete="off" placeholder="/Users/…/模板仓库" readonly>
+        <button class="button button-secondary" id="choose-directory" type="button">选择目录</button>
+      </div>
+      <p class="form-error" id="repository-error" role="alert" hidden></p>
+      <div class="modal-actions"><button class="button button-primary" type="submit">使用此目录</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="help-dialog" aria-labelledby="help-title">
+    <div class="modal-heading">
+      <h2 id="help-title">使用说明</h2>
+      <form method="dialog" novalidate><button class="button button-quiet icon-button" type="submit" aria-label="关闭使用说明"><svg aria-hidden="true"><use href="#i-close"/></svg></button></form>
+    </div>
+    <div class="help-body">
+      <section>
+        <h3>导入关卡</h3>
+        <p>上传 config_level 的 CSV，或粘贴模板 ID 和副本参数。参数和 ID 可逐行并排，也可分成两段按顺序粘贴。重复的 ID 可对应同一模板的不同副本。</p>
+        <p>只有模板 ID 时，先在「模板仓库」选定目录。也可以直接上传 .bytes 模板。</p>
+      </section>
+      <section>
+        <h3>设置模拟</h3>
+        <p>提供参数时按每组指定参数模拟。缺少参数时，工具会在 A、B 单图案组数各 1–4 的范围内取样。可以调整范围和随机种子，也可以用预期人均消耗或裸胜率作为推荐目标。</p>
+      </section>
+      <section>
+        <h3>查看结果</h3>
+        <p>各指标按模板和副本展示。裸胜率指未使用道具或复活就通关的局占比。模型和抽样信息会随结果一起显示。</p>
+        <p>幸运值使用旧版 L，按本地 ulinkconfig 的关卡列表和配置匹配 FUUU 档位。没有可用映射时使用档位 1。</p>
+        <p>失败 FUUU 为出现无解的失败局中，无解进度超过 50% 的比例。胜利 FUUU 为出现高压的胜利局中，高压次数超过 3 次的比例。没有可计入分母的局时显示短横线。</p>
+      </section>
+    </div>
+  </dialog>
+</body>
+</html>

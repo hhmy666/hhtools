@@ -53,12 +53,16 @@ from puzzle_core.errors import (  # noqa: E402
     PuzzleToolError,
 )
 from puzzle_core.planning import canonical_json, resolve_batch  # noqa: E402
+from puzzle_core.player_candidate_rollout import load_player_model, predict_player_candidate  # noqa: E402
+from puzzle_core.rewrite import rewrite_template  # noqa: E402
 from puzzle_core.search import ALGORITHM_VERSION  # noqa: E402
 from puzzle_core.template_reader import parse_level_bytes  # noqa: E402
 from services.export_service import (  # noqa: E402
     ExportRequest,
+    ExportSelection,
     export_selected,
     new_idempotency_key,
+    validate_idempotency_key,
 )
 from services.import_service import (  # noqa: E402
     MAX_SOURCE_BYTES,
@@ -106,6 +110,7 @@ from services.ui_service import (  # noqa: E402
     build_candidate_board,
     build_candidate_comparison,
     build_source_board,
+    candidate_review_payload,
 )
 
 
@@ -661,6 +666,8 @@ class JobRecord:
                         "resumable": blocked_reason is None,
                         "blocked_reason": blocked_reason,
                         "unfinished_candidate_slots": max(0, target - len(candidates)),
+                        "candidate_found_count": len(candidates),
+                        "candidate_target_count": target,
                     }
                 )
                 budget_items.append(
@@ -781,6 +788,7 @@ class JobRecord:
             "last_progress_at": self.last_progress_at,
             "status": visible_status,
             "revision": self.revision,
+            "result_item_count": len(self.presentation["items"]) if self.presentation is not None else 0,
             "control": control.as_dict(),
             "actions": {
                 "can_pause": control.can_pause and self.status in {"queued", "running"},
@@ -886,6 +894,7 @@ class ExportRunRecord:
         compare=False,
     )
     locked_selections: tuple[CandidateChoice, ...] = field(default_factory=tuple)
+    resolved_selections: tuple[ExportSelection, ...] = field(default_factory=tuple, repr=False)
     status: str = "queued"
     started_at: str | None = None
     completed_at: str | None = None
@@ -1000,8 +1009,7 @@ class ExportRunRecord:
                 "can_resume": control.can_resume,
                 "can_cancel": control.can_cancel
                 and self.status not in {"completed", "failed", "cancelled"},
-                "can_retry": self.status in {"failed", "cancelled"}
-                and (self.worker is None or not self.worker.is_alive()),
+                "can_retry": self.status in {"failed", "cancelled"},
             },
             "result": self.result,
             "error": self.error,
@@ -1055,6 +1063,10 @@ class GenerationPreflightRecord:
         }
 
 
+class CalibrationFallbackCancelled(Exception):
+    pass
+
+
 @dataclass
 class ConsumptionCalibrationRecord:
     job_id: str
@@ -1068,6 +1080,9 @@ class ConsumptionCalibrationRecord:
     completed_monotonic: float | None = None
     result: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
+    fallback_confirmation: dict[str, Any] | None = None
+    fallback_decision: bool | None = None
+    fallback_decided: threading.Event = field(default_factory=threading.Event)
 
     def summary(self) -> dict[str, Any]:
         return copy.deepcopy({
@@ -1084,6 +1099,7 @@ class ConsumptionCalibrationRecord:
             "progress": self.progress,
             "result": self.result,
             "error": self.error,
+            "fallback_confirmation": self.fallback_confirmation,
         })
 
 
@@ -1101,6 +1117,8 @@ class AppState:
         self.calibration_contexts: dict[str, dict[str, Any]] = {}
         self.generation_recommendation_undos: dict[str, dict[str, Any]] = {}
         self.generation_preflight_undos: dict[str, dict[str, Any]] = {}
+        self.player_preview_lock = threading.Lock()
+        self.player_previews: dict[tuple[str, str, int, int], dict[str, Any]] = {}
 
     def profile(self) -> Profile:
         profile = self.profile_service.active_profile()
@@ -3208,6 +3226,71 @@ class AppState:
             "board": build_source_board(source),
         }
 
+    def job_generation_parameters(self, job_id: str) -> dict[str, Any]:
+        job = self.get_job(job_id)
+        return {
+            "work_items": [
+                {
+                    "template_key": item.template_key,
+                    "plan_signature": item.plan.signature,
+                    "configured_parameters": item.configured_parameters,
+                }
+                for item in job.config.work_items
+            ],
+        }
+
+    def job_player_estimate(self, job_id: str, candidate_id: str) -> dict[str, Any]:
+        job = self.get_job(job_id)
+        with self.lock:
+            result = job.result
+        if result is None:
+            return {"status": "unavailable"}
+        match = next(
+            (
+                (item.source.level, generated.candidate)
+                for item in result.items if item.source is not None
+                for generated in item.candidates
+                if generated.candidate.candidate_id == candidate_id
+            ),
+            None,
+        )
+        if match is None:
+            raise InputValidationError("候选不属于当前生成任务")
+        level, candidate = match
+        if level.tower_member_indices or any(tile.has_debuff_index for tile in level.tiles):
+            return {"status": "unsupported"}
+        model_path = self.profile_service.settings_path.parent / "online-player-model.json"
+        if not model_path.is_file():
+            model_path = TOOL_ROOT.parent / "通关数据模拟" / "resources" / "models" / "online-player-model.json"
+        try:
+            stat = model_path.stat()
+        except FileNotFoundError:
+            return {"status": "unavailable"}
+
+        cache_key = job_id, candidate_id, stat.st_mtime_ns, stat.st_size
+        with self.player_preview_lock:
+            if cache_key in self.player_previews:
+                return self.player_previews[cache_key]
+            model_status, policies = load_player_model(model_path)
+            player_count = min(1200, len(policies) // 10 * 10)
+            if player_count <= 1000:
+                return {"status": "unavailable"}
+            candidate_level = parse_level_bytes(rewrite_template(
+                level, candidate_id,
+                {replacement.tile_index: replacement.structure_tile_id for replacement in candidate.replacements},
+            ))
+            prediction = predict_player_candidate(candidate_level, policies, player_count=player_count)
+            payload = {
+                "status": model_status,
+                "naked_pass_probability": prediction.win_rate,
+                "trial_count": prediction.player_count,
+                "scenario_count": prediction.scenario_count,
+            }
+            if len(self.player_previews) >= 64:
+                self.player_previews.pop(next(iter(self.player_previews)))
+            self.player_previews[cache_key] = payload
+            return payload
+
     def get_job(self, job_id: str) -> JobRecord:
         with self.lock:
             job = self.jobs.get(job_id)
@@ -3217,27 +3300,18 @@ class AppState:
 
     def export_job(self, job_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         job = self.get_job(job_id)
-        if job.result is None or job.status not in {"completed", "partial"}:
-            raise InputValidationError("候选生成尚未完成")
         selection_value = {
             "schema_version": 1,
             "selections": payload.get("selections"),
         }
         choices = parse_selection_payload(selection_value)
-        # Recreate candidates from the locked config and in-memory source bytes;
-        # the browser never supplies trusted replacements or validation objects.
-        regenerated = generate_batch(
-            job.config,
-            self.profile(),
-            loaded_inputs=job.sources,
-            previous_result=job.result,
-            retry_statuses=(),
-        )
-        selections = resolve_export_selections(job.config, regenerated, choices)
+        with self.lock:
+            selections = self._resolve_export_snapshot(job, choices)
+        profile = self.profile()
         key = str(payload.get("idempotency_key") or new_idempotency_key())
         result = export_selected(
             ExportRequest(
-                profile=self.profile(),
+                profile=profile,
                 selections=selections,
                 idempotency_key=key,
                 allow_duplicate_as_new_version=bool(
@@ -3250,7 +3324,7 @@ class AppState:
             choices
         )
         manifests = [
-            load_export_manifest(self.profile(), item["output_template_id"])
+            load_export_manifest(profile, item["output_template_id"])
             for item in result_payload["outputs"]
         ]
         with self.lock:
@@ -3258,79 +3332,75 @@ class AppState:
             job.exported_manifests = manifests
         return result_payload
 
+    @staticmethod
+    def _resolve_export_snapshot(
+        job: JobRecord, choices: tuple[CandidateChoice, ...]
+    ) -> tuple[ExportSelection, ...]:
+        snapshot = job.result
+        if snapshot is None:
+            raise InputValidationError("当前任务还没有可导出的候选快照")
+        if (
+            snapshot.batch_seed != job.config.batch.batch_seed
+            or snapshot.resolved_batch_hash != job.config.batch.config_hash
+            or snapshot.source_config_hash != job.config.source_config_hash
+        ):
+            raise InputValidationError("候选快照与当前锁定配置不一致")
+        return resolve_export_selections(
+            job.config, snapshot, choices, allow_incomplete_snapshot=True,
+        )
+
     def create_export_run(
         self, job_id: str, payload: Mapping[str, Any]
     ) -> ExportRunRecord:
         job = self.get_job(job_id)
-        if job.result is None or job.status not in {"completed", "partial"}:
-            raise InputValidationError("候选生成尚未完成")
-        # Validate the untrusted selection shape before accepting background
-        # work; candidate content is still reconstructed from backend state.
         choices = parse_selection_payload(
             {"schema_version": 1, "selections": payload.get("selections")}
         )
-        profile = self.profile()
-        record = ExportRunRecord(
-            export_id=f"export_{uuid.uuid4().hex}",
-            job_id=job_id,
-            created_at=_now(),
-            idempotency_key=str(
-                payload.get("idempotency_key") or new_idempotency_key()
-            ),
-            payload=dict(payload),
-            output_directory=str(Path(profile.output_root).resolve()),
-            profile_snapshot=profile,
-            locked_selections=choices,
-            progress_total=len(choices),
-        )
+        key = validate_idempotency_key(str(payload.get("idempotency_key") or new_idempotency_key()))
+        allow_duplicate = bool(payload.get("allow_duplicate_as_new_version", False))
         with self.lock:
-            self.exports[record.export_id] = record
-            worker = threading.Thread(
-                target=self._run_export,
-                args=(record.export_id,),
-                daemon=True,
+            for existing in self.exports.values():
+                if existing.idempotency_key != key:
+                    continue
+                if (
+                    existing.job_id != job_id
+                    or existing.locked_selections != choices
+                    or bool(existing.payload.get("allow_duplicate_as_new_version", False)) != allow_duplicate
+                ):
+                    raise InputValidationError("同一导出请求编号已用于其他候选选择")
+                return existing
+            selections = self._resolve_export_snapshot(job, choices)
+            profile = self.profile()
+            record = ExportRunRecord(
+                export_id=f"export_{uuid.uuid4().hex}",
+                job_id=job_id,
+                created_at=_now(),
+                idempotency_key=key,
+                payload=dict(payload),
+                output_directory=str(Path(profile.output_root).resolve()),
+                profile_snapshot=profile,
+                locked_selections=choices,
+                resolved_selections=selections,
+                progress_total=len(choices),
             )
-            record.worker = worker
-        worker.start()
+            self.exports[record.export_id] = record
+            self._start_export_worker(record)
         return record
 
-    def _record_export_rebuild_progress(
-        self, record: ExportRunRecord, job: JobRecord, value: GenerationBatchResult
-    ) -> None:
-        last_item = value.items[-1] if value.items else None
-        signature = (
-            value.run_status,
-            len(value.items),
-            None if last_item is None else last_item.template_key,
-            None if last_item is None else last_item.plan_id,
-            None if last_item is None else last_item.status,
-            None if last_item is None else len(last_item.candidates),
-            None if last_item is None else last_item.attempts_completed,
-        )
-        record.add_event(
-            "rebuild_progress",
-            status=value.run_status,
-            message=(
-                "导出前候选重建进度已更新"
-                if last_item is None
-                else f"已重建 {last_item.template_key}/{last_item.plan_id}"
-            ),
-            details={
-                "completed_work_items": len(value.items),
-                "work_item_count": len(job.config.work_items),
-                "template_key": None if last_item is None else last_item.template_key,
-                "plan_id": None if last_item is None else last_item.plan_id,
-                "item_status": None if last_item is None else last_item.status,
-                "candidate_count": 0
-                if last_item is None
-                else len(last_item.candidates),
-                "attempts_completed": 0
-                if last_item is None
-                else last_item.attempts_completed,
-            },
-            dedupe_scope="rebuild_progress",
-            dedupe_value=signature,
-        )
+    def _start_export_worker(self, record: ExportRunRecord) -> None:
+        worker = threading.Thread(target=self._run_export, args=(record.export_id,), daemon=True)
+        record.worker = worker
+        try:
+            worker.start()
+        except RuntimeError as exc:
+            now = _now()
+            record.worker = None
+            record.status = "failed"
+            record.completed_at = now
+            record.last_progress_at = now
+            record.error = {**_error_payload(exc), "message": "本地服务未能启动导出任务，请重试"}
+            record.revision += 1
+            record.add_event("failed", status="failed", message=record.error["message"], at=now)
 
     def _run_export(self, export_id: str) -> None:
         with self.lock:
@@ -3360,7 +3430,7 @@ class AppState:
             record.add_event(
                 "started",
                 status="running",
-                message="导出任务已开始，正在重建锁定候选",
+                message="导出任务已开始，正在读取已锁定的候选",
                 details={
                     "selection_count": len(record.locked_selections),
                     "phase": "rebuild",
@@ -3369,37 +3439,21 @@ class AppState:
             )
         try:
             choices = record.locked_selections
-
-            def rebuild_progress(value: GenerationBatchResult) -> None:
-                with self.lock:
-                    record.last_progress_at = _now()
-                    record.revision += 1
-                    self._record_export_rebuild_progress(record, job, value)
-
-            regenerated = generate_batch(
-                job.config,
-                export_profile,
-                loaded_inputs=job.sources,
-                control=record.control,
-                previous_result=job.result,
-                retry_statuses=(),
-                mark_control_completed=False,
-                progress_callback=rebuild_progress,
-            )
-            if regenerated.run_status == "cancelled":
-                raise OperationCancelledError("导出前候选重建已取消")
             with self.lock:
+                selection_summary = summarize_candidate_choices(choices)
+                work_item_count = selection_summary["work_item_count"]
+                record.add_event(
+                    "rebuild_progress",
+                    status="running",
+                    message="已读取锁定的候选快照",
+                    details={"completed_work_items": work_item_count, "work_item_count": work_item_count},
+                )
                 record.add_event(
                     "rebuild_completed",
-                    status=regenerated.run_status,
-                    message="导出前候选重建已完成",
-                    details=regenerated.as_dict()["summary"],
+                    status="completed",
+                    message="候选快照已就绪",
+                    details=selection_summary,
                 )
-            selections = resolve_export_selections(
-                job.config,
-                regenerated,
-                choices,
-            )
 
             def export_progress(completed: int, total: int, current_item: str) -> None:
                 with self.lock:
@@ -3425,7 +3479,7 @@ class AppState:
             result = export_selected(
                 ExportRequest(
                     profile=export_profile,
-                    selections=selections,
+                    selections=record.resolved_selections,
                     idempotency_key=record.idempotency_key,
                     allow_duplicate_as_new_version=bool(
                         record.payload.get(
@@ -3574,8 +3628,6 @@ class AppState:
             elif normalized == "retry":
                 if record.status not in {"failed", "cancelled"}:
                     raise InputValidationError("当前导出状态不允许重试")
-                if record.worker is not None and record.worker.is_alive():
-                    raise InputValidationError("旧导出线程尚未结束，暂不能重试")
                 record.control = CooperativeTaskControl()
                 record.status = "queued"
                 record.completed_at = None
@@ -3594,13 +3646,7 @@ class AppState:
                     message="导出重试已排队",
                     details={"selection_count": len(record.locked_selections)},
                 )
-                worker = threading.Thread(
-                    target=self._run_export,
-                    args=(record.export_id,),
-                    daemon=True,
-                )
-                record.worker = worker
-                worker.start()
+                self._start_export_worker(record)
             else:
                 raise InputValidationError("不支持的导出控制动作")
             if not accepted:
@@ -3615,7 +3661,7 @@ class AppState:
     def history(self) -> list[dict[str, Any]]:
         with self.lock:
             jobs = list(self.jobs.values())
-        return [job.summary() for job in reversed(jobs[-100:])]
+            return [job.summary() for job in reversed(jobs[-100:])]
 
     def export_history(self) -> list[dict[str, Any]]:
         with self.lock:
@@ -3777,8 +3823,19 @@ class AppState:
         profile, manifests, kwargs, result_context = (
             self._prepare_consumption_calibration(payload)
         )
+        allow_fallback = payload.get("allow_seed_fallback", False)
+        if not isinstance(allow_fallback, bool):
+            raise InputValidationError("allow_seed_fallback 必须是布尔值")
+
+        def confirm_fallback(template_id: str, duplicate_index: int, reason: str) -> None:
+            if not allow_fallback:
+                raise InputValidationError(
+                    f"{template_id} 的副本 {duplicate_index} 无法完成整盘仿真，请确认后继续",
+                    evidence={"template_id": template_id, "duplicate_index": duplicate_index, "reason": reason},
+                )
+
         return self._bind_calibration_context(profile, {
-            **build_consumption_calibration(profile, manifests, **kwargs),
+            **build_consumption_calibration(profile, manifests, **kwargs, confirm_seed_fallback=confirm_fallback),
             **result_context,
         })
 
@@ -3820,6 +3877,9 @@ class AppState:
             selection["manifests"], history_data=data,
             template_name_prefix=payload.get("template_name_prefix", ""),
             template_name_suffix=payload.get("template_name_suffix", ""),
+            template_name_prefixes=payload.get("template_name_prefixes"),
+            template_name_suffixes=payload.get("template_name_suffixes"),
+            template_name_overrides=payload.get("template_name_overrides"),
         )
 
     def _prepare_consumption_calibration(
@@ -3877,8 +3937,10 @@ class AppState:
             focus_output_template_id=(
                 str(payload.get("focus_output_template_id", "")).strip() or None
             ),
+            focus_history_level_id=str(payload.get("focus_history_level_id") or "").strip() or None,
             first_duplicate_max=payload.get("first_duplicate_max"),
             auto_first_duplicate_max=payload.get("auto_first_duplicate_max", False),
+            first_duplicate_structure_deduction_count=payload.get("first_duplicate_structure_deduction_count"),
             simulate_first_duplicate_seeds=payload.get(
                 "simulate_first_duplicate_seeds", False
             ),
@@ -3890,6 +3952,9 @@ class AppState:
             ),
             template_name_prefix=payload.get("template_name_prefix", ""),
             template_name_suffix=payload.get("template_name_suffix", ""),
+            template_name_prefixes=payload.get("template_name_prefixes"),
+            template_name_suffixes=payload.get("template_name_suffixes"),
+            template_name_overrides=payload.get("template_name_overrides"),
         )
         return self.profile(), selection["manifests"], kwargs, {
             "selection_id": selection_id,
@@ -3920,7 +3985,7 @@ class AppState:
             for existing in self.consumption_calibration_jobs.values():
                 if (
                     existing.request_fingerprint == fingerprint
-                    and existing.status in {"queued", "running"}
+                    and existing.status in {"queued", "running", "awaiting_confirmation"}
                 ):
                     return existing.summary()
             job_id = f"calibration_{uuid.uuid4().hex}"
@@ -3960,6 +4025,20 @@ class AppState:
                 raise InputValidationError("校准任务不存在或会话已失效，请重新生成")
             return record.summary()
 
+    def decide_calibration_fallback(self, job_id: str, proceed: Any) -> dict[str, Any]:
+        if not isinstance(proceed, bool):
+            raise InputValidationError("请选择继续或取消简化模拟")
+        with self.lock:
+            record = self.consumption_calibration_jobs.get(job_id)
+            if record is None:
+                raise InputValidationError("校准任务不存在或会话已失效")
+            if record.status == "awaiting_confirmation" and record.fallback_confirmation is not None:
+                record.fallback_decision = proceed
+                record.fallback_confirmation = None
+                record.status = "running"
+                record.fallback_decided.set()
+            return record.summary()
+
     def _run_consumption_calibration(
         self,
         job_id: str,
@@ -3977,9 +4056,26 @@ class AppState:
             with self.lock:
                 record.progress.update(value)
 
+        def confirm_fallback(template_id: str, duplicate_index: int, reason: str) -> None:
+            with self.lock:
+                if record.fallback_decision is True:
+                    return
+                record.fallback_confirmation = {
+                    "template_id": template_id,
+                    "duplicate_index": duplicate_index,
+                    "reason": reason,
+                }
+                record.status = "awaiting_confirmation"
+            record.fallback_decided.wait(timeout=300)
+            with self.lock:
+                if record.fallback_decision is not True:
+                    record.fallback_confirmation = None
+                    raise CalibrationFallbackCancelled()
+
         try:
             result = build_consumption_calibration(
-                profile, manifests, **kwargs, progress_callback=progress
+                profile, manifests, **kwargs, progress_callback=progress,
+                confirm_seed_fallback=confirm_fallback,
             )
             with self.lock:
                 record.result = self._bind_calibration_context(
@@ -3994,6 +4090,12 @@ class AppState:
                     "template_completed": record.progress["template_total"],
                     "duplicate_completed": record.progress["duplicate_total_all"],
                 })
+        except CalibrationFallbackCancelled:
+            with self.lock:
+                record.status = "cancelled"
+                record.fallback_confirmation = None
+                record.completed_at = _now()
+                record.completed_monotonic = time.monotonic()
         except Exception as exc:
             with self.lock:
                 record.status = "failed"
@@ -4002,13 +4104,16 @@ class AppState:
                 record.completed_monotonic = time.monotonic()
 
     def write_consumption_calibration_config(
-        self, payload: Mapping[str, Any]
+        self, payload: Mapping[str, Any], *, preview: bool = False,
     ) -> dict[str, Any]:
         """Write the currently reviewed calibration rows to config_level."""
 
         rows = payload.get("rows")
         if not isinstance(rows, list):
             raise InputValidationError("rows 必须是校准结果数组")
+        naming = payload.get("naming")
+        if "naming" in payload and not isinstance(naming, Mapping):
+            raise InputValidationError("请选择关卡 ID 命名方式")
         profile = self.profile()
         context_ids = {
             str(row.get("calibration_context_id"))
@@ -4047,6 +4152,9 @@ class AppState:
             profile,
             config_set_id=selected_config_id,
             calibration_rows=rows,
+            naming=naming,
+            description=payload.get("description"),
+            preview=preview,
         )
 
     def lookup_unlaunched_parameters(
@@ -4167,10 +4275,18 @@ class RequestHandler(BaseHTTPRequestHandler):
         )
         self.end_headers()
 
-    def _send_json(self, payload: Any, status: int = HTTPStatus.OK) -> None:
-        # Canonical JSON is already a complete wire representation. Avoid
-        # decoding and encoding it again, especially for large candidate polls.
-        data = canonical_json(payload).encode("utf-8")
+    def _send_json(
+        self, payload: Any, status: int = HTTPStatus.OK, *, fast: bool = False
+    ) -> None:
+        if fast:
+            try:
+                # Job presentations are wire dictionaries, not inputs to hashes.
+                encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+            except TypeError:
+                encoded = canonical_json(payload)
+        else:
+            encoded = canonical_json(payload)
+        data = encoded.encode("utf-8")
         self._headers("application/json; charset=utf-8", len(data), int(status))
         self.wfile.write(data)
 
@@ -4210,10 +4326,16 @@ class RequestHandler(BaseHTTPRequestHandler):
             raise InputValidationError("页面会话已失效，请刷新后重试")
 
     def _route_error(self, error: Exception) -> None:
+        if isinstance(error, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            self.close_connection = True
+            return
         status = HTTPStatus.BAD_REQUEST
         if isinstance(error, FileNotFoundError):
             status = HTTPStatus.NOT_FOUND
-        self._send_json({"ok": False, "error": _error_payload(error)}, status)
+        try:
+            self._send_json({"ok": False, "error": _error_payload(error)}, status)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self.close_connection = True
 
     def do_GET(self) -> None:  # noqa: N802
         try:
@@ -4289,6 +4411,42 @@ class RequestHandler(BaseHTTPRequestHandler):
                 job_id, template_key = path.removeprefix("/api/v1/jobs/").split("/source/", 1)
                 self._send_json({"ok": True, **self.app.job_source_preview(job_id, template_key)})
                 return
+            if path.startswith("/api/v1/jobs/") and "/player-estimate/" in path:
+                job_id, candidate_id = path.removeprefix("/api/v1/jobs/").split("/player-estimate/", 1)
+                self._send_json({"ok": True, **self.app.job_player_estimate(job_id, candidate_id)})
+                return
+            if path.startswith("/api/v1/jobs/") and path.endswith("/generation-parameters"):
+                job_id = path.removeprefix("/api/v1/jobs/").removesuffix("/generation-parameters")
+                self._send_json({"ok": True, **self.app.job_generation_parameters(job_id)})
+                return
+            if path.startswith("/api/v1/jobs/") and path.endswith("/result"):
+                job_id = path.removeprefix("/api/v1/jobs/").removesuffix("/result")
+                query = parse_qs(parsed.query)
+                start = int(query.get("start", ["0"])[0])
+                revision = int(query.get("revision", ["-1"])[0])
+                if start < 0 or revision < 0:
+                    raise InputValidationError("候选明细页的起点或任务版本无效")
+                job = self.app.get_job(job_id)
+                with self.app.lock:
+                    presentation = job.presentation
+                    current_revision = job.revision
+                if revision != current_revision:
+                    self._send_json({
+                        "ok": False,
+                        "error": {"code": "RESULT_REVISION_CHANGED", "message": "任务有新进展，正在同步候选明细。"},
+                    }, HTTPStatus.CONFLICT)
+                    return
+                items = presentation["items"] if presentation is not None else []
+                page = [
+                    {**item, "candidates": [candidate_review_payload(candidate) for candidate in item["candidates"]]}
+                    for item in items[start:start + 3]
+                ]
+                self._send_json({
+                    "ok": True, "job_id": job_id, "revision": revision,
+                    "start": start, "total_items": len(items),
+                    "result": {**(presentation or {}), "items": page},
+                }, fast=True)
+                return
             if path.startswith("/api/v1/jobs/"):
                 job_id = path.removeprefix("/api/v1/jobs/").strip("/")
                 job = self.app.get_job(job_id)
@@ -4298,7 +4456,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                         payload["result"] = job.presentation
                     if job.export_result is not None:
                         payload["export_result"] = job.export_result
-                self._send_json(payload)
+                self._send_json(payload, fast=True)
                 return
             if path == "/api/v1/reports":
                 self._send_json({"ok": True, "reports": self.app.reports()})
@@ -4547,6 +4705,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             if path == "/api/v1/parameters/match-consumption-templates":
                 self._send_json({"ok": True, **self.app.match_consumption_templates(body)})
                 return
+            if path.startswith("/api/v1/parameters/consumption-calibration-jobs/") and path.endswith("/fallback"):
+                job_id = path.removeprefix("/api/v1/parameters/consumption-calibration-jobs/").removesuffix("/fallback")
+                self._send_json({"ok": True, **self.app.decide_calibration_fallback(job_id, body.get("proceed"))})
+                return
             if path == "/api/v1/parameters/consumption-calibration-jobs":
                 self._send_json(
                     {"ok": True, **self.app.create_consumption_calibration_job(body)},
@@ -4560,6 +4722,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                         **self.app.write_consumption_calibration_config(body),
                     }
                 )
+                return
+            if path == "/api/v1/parameters/preview-calibration-level-ids":
+                self._send_json({"ok": True, **self.app.write_consumption_calibration_config(body, preview=True)})
                 return
             if path == "/api/v1/parameters/unlaunched-index":
                 self._send_json(

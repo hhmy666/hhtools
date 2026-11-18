@@ -26,6 +26,33 @@ class ExtendedAlphabetProofTests(unittest.TestCase):
         self.assertEqual(path.literal_first_match_click, 5)
         self.assertTrue(any(item.failure_reachable for item in proof.capacity_proofs))
 
+    def test_dense_s6_proves_gate_and_capacity_without_exhaustive_counting(self):
+        types = tuple("CCDGGG" + "CDDEEEFFF" + "CCCDDDEEEFFF" * 3)
+        masks = (0, 0, 0, 1, 2, 4) + (0,) * (len(types) - 6)
+        limits = solver.SolverLimits(max_states=50_000, max_path_count=1000)
+        with self.assertRaises(ProofLimitExceeded):
+            solver.analyze_puzzle(masks, types, threshold_type="G", limits=limits)
+        proof = solver.analyze_puzzle(
+            masks, types, threshold_type="G", limits=limits, allow_capacity_witness=True,
+        )
+        self.assertTrue(solver.validate_target(proof, 6)[0])
+        for capacity_proof in proof.capacity_proofs:
+            self.assertTrue(capacity_proof.witness_only)
+            self.assertEqual(capacity_proof.classification, "safe_and_failure_paths")
+            self.assertIsNone(capacity_proof.minimum_failure_click)
+            order = capacity_proof.recommended_order
+            removed = 0
+            for index in order:
+                self.assertIn(index, solver.available_indices(removed, masks))
+                removed |= 1 << index
+            replay = solver.simulate_order(
+                order, types, threshold_type="G", capacity=capacity_proof.capacity,
+            )
+            self.assertTrue(replay.complete)
+            self.assertEqual(replay.literal_first_match_click, 6)
+            self.assertEqual(replay.gate_structure_step, 6)
+        self.assertFalse(solver.validate_target(proof, 7)[0])
+
     def test_convolution_checks_cancellation_before_alphabet_expansion(self):
         checks = []
         def cancel(phase):

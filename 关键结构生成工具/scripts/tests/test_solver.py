@@ -9,7 +9,7 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from puzzle_core.errors import InputValidationError
+from puzzle_core.errors import CandidateValidationError, InputValidationError
 from puzzle_core import solver
 from puzzle_core.solver import (
     SolverLimits,
@@ -303,6 +303,40 @@ class SolverTest(unittest.TestCase):
             "no_recommended_path_with_recycle_constraints",
             validate_target(too_much_lead, 5)[1],
         )
+
+    def test_large_recycle_opening_proves_earliest_gate_and_safe_completion(self) -> None:
+        for recycles, prefix in ((1, "EECCDEFFC"), (2, "EECCDEFFFGGC")):
+            with self.subTest(recycles=recycles):
+                tail = "".join(label * (12 - prefix.count(label)) for label in "DEFGC")
+                types = tuple(prefix + tail)
+                gate_index = len(prefix) - 1
+                masks = (*chain_masks(len(prefix)), *(
+                    1 << gate_index if label == "C" else 0 for label in tail
+                ))
+                witness = tuple(range(len(types)))
+                self.assertTrue(solver.proof_state_budget_exceeded(masks, SolverLimits().max_states))
+                proof = analyze_puzzle(
+                    masks, types, threshold_type="C", required_pre_gate_recycles=recycles,
+                    first_recycle_lead_tiles=3, allow_capacity_witness=True, recycle_order=witness,
+                )
+                self.assertEqual(proof.earliest_gate_click, 6 + 3 * recycles)
+                self.assertEqual(proof.minimum_structure_step, 6)
+                self.assertEqual(proof.recommended_first_match_click, 6)
+                self.assertTrue(validate_target(proof, 6)[0])
+                trace = simulate_order(proof.recommended_order, types, threshold_type="C", capacity=7)
+                self.assertTrue(trace.complete)
+                self.assertEqual(trace.gate_structure_step, 6)
+                self.assertEqual(proof, analyze_puzzle(
+                    masks, types, threshold_type="C", required_pre_gate_recycles=recycles,
+                    first_recycle_lead_tiles=3, allow_capacity_witness=True,
+                    recycle_order=proof.recommended_order,
+                ))
+                with self.assertRaises(CandidateValidationError):
+                    analyze_puzzle(
+                        masks, types, threshold_type="C", required_pre_gate_recycles=recycles,
+                        first_recycle_lead_tiles=3, allow_capacity_witness=True,
+                        recycle_order=(1, 0, *witness[2:]),
+                    )
 
     def test_recycle_constrained_recommendation_is_itself_capacity_safe(self) -> None:
         # A capacity-safe completion exists, but the first unconstrained order
